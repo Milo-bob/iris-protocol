@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Iris Protocol</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: Consolas, "Courier New", monospace; }
+  #stage { position: absolute; left: 50%; top: 50%; width: min(100vw, 177.78vh); height: min(56.25vw, 100vh); transform: translate(-50%, -50%); background: #1a0508; overflow: hidden; }
+  #stage canvas { display: block; width: 100%; height: 100%; }
+  .hud { position: absolute; color: #ffb36b; text-shadow: 0 0 6px #000, 0 0 2px #000; pointer-events: none; font-size: clamp(10px, 1.4vw, 15px); }
+  #top { left: 12px; top: 10px; line-height: 1.5; }
+  #top b { color: #ff4a2a; letter-spacing: 2px; }
+  #help { left: 12px; bottom: 10px; opacity: .8; }
+  #pause { inset: 0; display: none; align-items: center; justify-content: center; background: rgba(20, 3, 4, .6); font-size: clamp(20px, 4vw, 44px); letter-spacing: 8px; color: #ff4a2a; }
+  #pause.on { display: flex; }
+  #zone { left: 50%; top: 9%; transform: translateX(-50%); text-align: center; opacity: 0; transition: opacity 1.2s; }
+  #zone.on { opacity: 1; transition: opacity .4s; }
+  #zoneName { font-size: clamp(16px, 2.6vw, 30px); letter-spacing: 6px; color: #ff4a2a; }
+  #zoneSub { margin-top: 4px; letter-spacing: 3px; color: #ffc233; }
+  #loading { position: absolute; inset: 0; background: #0a0204; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #ff4a2a; letter-spacing: 6px; font-size: clamp(14px, 2.4vw, 26px); z-index: 20; }
+  #barwrap { width: 40%; height: 4px; background: #2a0a0a; margin-top: 18px; }
+  #bar { width: 0; height: 100%; background: #ff4a2a; transition: width .2s; }
+  #startmsg { margin-top: 26px; color: #ffc233; font-size: clamp(11px, 1.6vw, 18px); letter-spacing: 4px; display: none; animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+  #hpwrap { left: 12px; bottom: 44px; width: 26%; }
+  .meter { height: 10px; background: rgba(0, 0, 0, .55); border: 1px solid #5a2a1a; }
+  .meter > div { height: 100%; width: 100%; transition: width .15s; }
+  #hpfill { background: linear-gradient(90deg, #b3200f, #ff5a2a); }
+  #alarmwrap { right: 12px; top: 10px; width: 20%; text-align: right; }
+  #alarmfill { background: linear-gradient(90deg, #ffc233, #ff2a1a); width: 0; }
+  #objective { right: 12px; bottom: 10px; text-align: right; max-width: 38%; color: #ffd36b; }
+  #cross { left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; background: #ffd36b; border-radius: 50%; opacity: .7; }
+  #vignette { inset: 0; box-shadow: inset 0 0 0 0 rgba(255, 20, 10, 0); transition: box-shadow .3s; }
+  #vignette.hurt { box-shadow: inset 0 0 160px 40px rgba(255, 20, 10, .75); transition: none; }
+  #vignette.spotted { box-shadow: inset 0 0 140px 10px rgba(255, 30, 10, .35); animation: pulse 0.9s infinite; }
+  @keyframes pulse { 50% { box-shadow: inset 0 0 180px 30px rgba(255, 30, 10, .55); } }
+  #bars .bar { position: absolute; left: 0; right: 0; height: 0; background: #000; transition: height .8s; z-index: 9; }
+  #bars .top { top: 0; } #bars .bot { bottom: 0; }
+  #bars.on .bar { height: 12%; }
+  #caption { left: 50%; bottom: 16%; transform: translateX(-50%); width: 80%; text-align: center; font-size: clamp(14px, 2.2vw, 26px); letter-spacing: 3px; color: #ffcf6a; z-index: 10; min-height: 1.2em; }
+  #titlecard { left: 50%; top: 42%; transform: translate(-50%, -50%); text-align: center; font-size: clamp(26px, 6vw, 72px); letter-spacing: 14px; color: #ff3a1a; opacity: 0; transition: opacity 1.6s; z-index: 10; text-shadow: 0 0 30px #a00; }
+  #titlecard.on { opacity: 1; }
+  #skip { right: 14px; bottom: 14px; z-index: 10; opacity: .7; display: none; }
+  #death { inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; background: rgba(20, 0, 2, .72); z-index: 15; text-align: center; }
+  #death.on { display: flex; }
+  #death h1 { margin: 0; font-size: clamp(22px, 4.6vw, 54px); letter-spacing: 10px; color: #ff3a1a; }
+  #death p { margin-top: 14px; color: #ffc233; letter-spacing: 3px; }
+  .cinematic .hudgame { display: none; }
+  #prompt { left: 50%; bottom: 24%; transform: translateX(-50%); display: none; font-size: clamp(13px, 1.9vw, 21px); letter-spacing: 3px; color: #ffe08a; background: rgba(0, 0, 0, .45); padding: 6px 14px; border: 1px solid #7a4a1a; }
+  #holdwrap { left: 50%; bottom: 20%; transform: translateX(-50%); width: 18%; display: none; }
+  #holdfill { background: #ffc233; width: 0; }
+  #fade { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; z-index: 30; }
+  #bossbar { left: 50%; bottom: 7%; transform: translateX(-50%); width: 46%; display: none; text-align: center; }
+  #bossbar .meter { height: 14px; border-color: #7a1a10; }
+  #bossfill { background: linear-gradient(90deg, #8a0e08, #ff3a1a); }
+  #bossname { letter-spacing: 8px; color: #ff4a2a; margin-bottom: 3px; }
+  #endcard { inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; background: rgba(0, 0, 0, .78); z-index: 25; text-align: center; pointer-events: auto; }
+  #endcard.on { display: flex; }
+  #endcard h1 { margin: 0; font-size: clamp(24px, 5.5vw, 66px); letter-spacing: 12px; color: #ff4a2a; }
+  #endcard p { margin-top: 16px; color: #ffc233; letter-spacing: 4px; }
+</style>
+<script type="importmap">{ "imports": { "three": "./js/three.module.js" } }</script>
+</head>
+<body>
+<div id="stage">
+  <div id="vignette" class="hud"></div>
+  <div id="top" class="hud hudgame"><b>THE IRIS PROTOCOL</b> &nbsp;prototype M2<br><span id="fps">-</span> FPS &nbsp;|&nbsp; Shadows: <span id="sh"></span></div>
+  <div id="hpwrap" class="hud hudgame"><div>HEALTH</div><div class="meter"><div id="hpfill"></div></div></div>
+  <div id="alarmwrap" class="hud hudgame"><div id="alarmtxt">ALARM</div><div class="meter"><div id="alarmfill"></div></div></div>
+  <div id="objective" class="hud hudgame">OBJECTIVE: Escape Detention Sector 7. Find your file.</div>
+  <div id="cross" class="hud hudgame"></div>
+  <div id="lock" class="hud hudgame" style="left:50%;top:22%;transform:translateX(-50%);font-size:clamp(12px,1.8vw,20px);color:#ffd36b">Click to capture the mouse</div>
+  <div id="zone" class="hud hudgame"><div id="zoneName"></div><div id="zoneSub"></div></div>
+  <div id="pause" class="hud"><div style="text-align:center">PAUSED<div style="margin-top:18px;font-size:.32em;letter-spacing:4px;color:#ffc233">"I STILL SEE YOU, PRISONER ZERO. STOPPING TIME WILL NOT SAVE YOU."</div><div style="margin-top:22px;font-size:.26em;letter-spacing:4px;opacity:.75">P: CONTINUE &nbsp;&middot;&nbsp; BACKSPACE: RESTART</div></div></div>
+  <div id="bars"><div class="bar top"></div><div class="bar bot"></div></div>
+  <div id="caption" class="hud"></div>
+  <div id="titlecard" class="hud">THE IRIS PROTOCOL</div>
+  <div id="skip" class="hud">ENTER / SPACE: skip</div>
+  <div id="prompt" class="hud hudgame"></div>
+  <div id="holdwrap" class="hud hudgame"><div class="meter"><div id="holdfill"></div></div></div>
+  <div id="bossbar" class="hud hudgame"><div id="bossname">THE IRIS</div><div class="meter"><div id="bossfill"></div></div></div>
+  <div id="fade"></div>
+  <div id="endcard"><h1>THE EYE IS BLIND</h1><p>THE IRIS PROTOCOL: TERMINATED</p><p>TO BE CONTINUED...</p><p style="opacity:.7">Press ENTER to play again</p></div>
+  <div id="death"><h1>ARRESTED</h1><p>Prisoner_0 has been recaptured.</p><p>Press R to try again</p></div>
+  <div id="loading"><div>LOADING</div><div id="barwrap"><div id="bar"></div></div><div id="startmsg">CLICK OR PRESS ANY KEY TO BEGIN</div></div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
