@@ -1,11 +1,12 @@
 // Tiny synthesized audio (no files): ambient drone, combat sfx, PA voice via speechSynthesis.
-let ac = null, master = null, noiseBuf = null;
+let ac = null, master = null, noiseBuf = null, muffle = null, dreadG = null, dread = 0, beatT = 0;
 
 export function initAudio() {
   if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
   try {
     ac = new (window.AudioContext || window.webkitAudioContext)();
-    master = ac.createGain(); master.gain.value = 0.55; master.connect(ac.destination);
+    master = ac.createGain(); master.gain.value = 0.55;
+    muffle = ac.createBiquadFilter(); muffle.type = 'lowpass'; muffle.frequency.value = 20000; master.connect(muffle); muffle.connect(ac.destination);
     noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
     const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     // ambient: two detuned low sines + filtered noise wind
@@ -15,6 +16,9 @@ export function initAudio() {
     const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 380;
     const ng = ac.createGain(); ng.gain.value = 0.07;
     n.connect(lp); lp.connect(ng); ng.connect(master); n.start();
+    // dread: low beating rumble that grows while the hunter is close
+    dreadG = ac.createGain(); dreadG.gain.value = 0; dreadG.connect(master);
+    for (const f of [41, 43.4, 61.5]) { const o = ac.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 140; o.connect(lp); lp.connect(dreadG); o.start(); }
     const lfo = ac.createOscillator(); lfo.frequency.value = 0.07; const lg = ac.createGain(); lg.gain.value = 200; lfo.connect(lg); lg.connect(lp.frequency); lfo.start();
   } catch (e) { ac = null; }
 }
@@ -45,7 +49,22 @@ export const sfx = {
   ko: (v = 1) => { tone({ f: 120, f2: 40, dur: 0.5, gain: 0.35, v }); },
   jump: () => noise({ dur: 0.12, f: 600, q: 0.5, gain: 0.08, sweep: 400 }),
   dash: () => noise({ dur: 0.3, f: 900, q: 0.5, gain: 0.2, sweep: -600 }),
+  shot: (v = 1) => { noise({ dur: 0.09, f: 2400, q: 0.7, gain: 0.22, sweep: -1700, v }); tone({ f: 280, f2: 70, dur: 0.1, type: 'square', gain: 0.09, v }); },
+  dry: () => tone({ f: 1500, f2: 900, dur: 0.04, type: 'square', gain: 0.05 }),
+  reload: () => { noise({ dur: 0.05, f: 3000, q: 3, gain: 0.15 }); setTimeout(() => noise({ dur: 0.07, f: 2000, q: 3, gain: 0.18 }), 650); },
+  thud: (v = 1) => { noise({ dur: 0.18, f: 180, type: 'lowpass', gain: 0.4, v }); tone({ f: 90, f2: 40, dur: 0.2, gain: 0.3, v }); },
+  choke: () => noise({ dur: 0.9, f: 520, q: 0.6, gain: 0.09, sweep: -300 }),
+  punch: () => { noise({ dur: 0.1, f: 400, type: 'lowpass', gain: 0.35 }); tone({ f: 110, f2: 55, dur: 0.12, gain: 0.3 }); },
+  stalkerRise: () => { tone({ f: 48, f2: 30, dur: 2.2, type: 'sawtooth', gain: 0.2 }); noise({ dur: 2.0, f: 220, type: 'lowpass', gain: 0.25 }); },
+  stalkerRoar: () => { tone({ f: 92, f2: 36, dur: 1.2, type: 'sawtooth', gain: 0.28 }); tone({ f: 99, f2: 40, dur: 1.2, type: 'square', gain: 0.1 }); noise({ dur: 1.0, f: 800, q: 1, gain: 0.22, sweep: -600 }); },
+  heart: (v = 1) => { tone({ f: 62, f2: 40, dur: 0.14, gain: 0.5 * v }); setTimeout(() => tone({ f: 55, f2: 36, dur: 0.16, gain: 0.36 * v }), 170); },
 };
+export function setDread(v) { dread = Math.max(0, Math.min(1, v)); if (dreadG) dreadG.gain.setTargetAtTime(dread * 0.3, ac.currentTime, 0.4); }
+export function tickDread(dt) {
+  if (!ac || dread < 0.12) return;
+  beatT -= dt; if (beatT <= 0) { beatT = 1.15 - 0.65 * dread; sfx.heart(0.35 + 0.65 * dread); }
+}
+export function setMuffle(on) { if (muffle) muffle.frequency.setTargetAtTime(on ? 650 : 20000, ac.currentTime, 0.15); }
 
 // Propaganda voice from the loudspeakers (browser speech synthesis, deep and slow)
 export function announce(text) {

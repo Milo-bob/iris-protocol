@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { clone as cloneSkel } from './jsm/utils/SkeletonUtils.js';
 import { pbr } from './assets.js';
 import { getModels } from './npc.js';
-import { createEye } from './tower.js';
+import { createMass } from './mass.js';
 import { eyeTexture } from './city.js';
 import { sfx } from './audio.js';
 
@@ -11,7 +11,7 @@ const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 const rr = (a, b) => a + Math.random() * (b - a);
 
 // ---------------------------------------------------------------------------
-// Final boss "The Iris": phase 1 = the businessman, phase 2 = the eldritch eye.
+// Final boss "The Iris": phase 1 = the businessman, phase 2 = the Dictator's true body: a mass of black matter with many eyes and tentacles.
 // ---------------------------------------------------------------------------
 export class Boss {
   constructor(scene, fx, cb) {
@@ -40,7 +40,8 @@ export class Boss {
     this.anim = ''; this.setAnim('idle');
     this.group.add(this.suit);
     // the eye (phase 2)
-    this.eyeObj = createEye(3.8, 26); this.eye = this.eyeObj.group; this.eye.visible = false; this.eye.position.set(0, -6, 0); this.group.add(this.eye);
+    this.mass = createMass({ R: 3.4, tentacles: 12, tentLen: 9, segs: 16, eyes: 18, eyeSize: 0.5, bigEye: 0.55, glowSize: 26, wobble: 0.07 });
+    this.eyeObj = { irisMat: this.mass.mats.iris }; this.eye = this.mass.group; this.eye.visible = false; this.eye.position.set(0, -6, 0); this.group.add(this.eye);
     this.eyeLight = new THREE.PointLight(0xff3a20, 0, 40, 2); this.eye.add(this.eyeLight);
     // shared meshes
     this.ringGeo = new THREE.RingGeometry(0.96, 1, 64);
@@ -113,6 +114,30 @@ export class Boss {
       else if (d < 3.8 + range && this.eye.position.y < 4) { this.fx.emit(P.x + Math.sin(yaw) * 1.6, 1.4, P.z + Math.cos(yaw) * 1.6, 8, 0x80b0ff, 4, 0.3); sfx.metal(0.6); this.cb.hint?.('Destroy the tentacles to blind the eye!'); }
     }
     return hits;
+  }
+  // would a punch with this reach connect? (no damage)
+  inReach(P, yaw, range = 2.4, half = 0.95) {
+    const arc = (x, z, extra = 0) => { const dx = x - P.x, dz = z - P.z, d = Math.hypot(dx, dz); return d < range + extra && (d < 1.2 || Math.abs(angDiff(Math.atan2(dx, dz), yaw)) < half + 0.2); };
+    if (this.phase === 1 && arc(this.x, this.z, 0.9)) return true;
+    for (const t of this.tents) if ((t.state === 'up' || t.state === 'rise') && arc(t.x, t.z, 0.8)) return true;
+    if (this.phase === 3 && this.eye.visible && this.eye.position.y < 4 && arc(this.eye.position.x, this.eye.position.z, 3.8)) return true;
+    return false;
+  }
+  // a bullet along ray o + t*d (d is a unit vector): returns the hit distance or -1
+  shotTest(o, d, maxT, dmg) {
+    const sph = (cx, cy, cz, r) => { const ox = cx - o.x, oy = cy - o.y, oz = cz - o.z, tca = ox * d.x + oy * d.y + oz * d.z; if (tca < 0) return -1; const d2 = ox * ox + oy * oy + oz * oz - tca * tca; return d2 > r * r ? -1 : tca - Math.sqrt(r * r - d2); };
+    let bt = maxT, what = null, tent = null;
+    const take = (t, w, tt) => { if (t >= 0 && t < bt) { bt = t; what = w; tent = tt || null; } };
+    if (this.phase === 1) { take(sph(this.x, 1.0, this.z, 0.75), 'suit'); take(sph(this.x, 1.9, this.z, 0.6), 'suit'); }
+    for (const t of this.tents) if (t.state === 'up' || t.state === 'rise') for (const y of [0.8, 2.2, 3.6]) take(sph(t.x, y, t.z, 0.75), 'tent', t);
+    if (this.phase === 3 && this.eye.visible) take(sph(this.eye.position.x, this.eye.position.y, this.eye.position.z, 3.6), 'eye');
+    if (!what) return -1;
+    const p = { x: o.x + d.x * bt, y: o.y + d.y * bt, z: o.z + d.z * bt };
+    if (what === 'suit') this.damage(dmg * 0.5);
+    else if (what === 'tent') { tent.hp -= dmg; this.fx.emit(p.x, p.y, p.z, 8, 0xc040a0, 4, 0.4); sfx.hit(0.8); if (tent.hp <= 0) this.killTent(tent); }
+    else if (this.vulnerable) this.damage(dmg * 0.6);
+    else { this.fx.emit(p.x, p.y, p.z, 8, 0x80b0ff, 4, 0.3); sfx.metal(0.6); this.cb.hint?.('Destroy the tentacles to blind the Dictator!'); }
+    return bt;
   }
   damage(d) {
     this.hp -= d; this.flash = 0.15; this.fx.emit(this.phase === 1 ? this.x : this.eye.position.x, this.phase === 1 ? 1.4 : this.eye.position.y, this.phase === 1 ? this.z : this.eye.position.z, 14, this.phase === 1 ? 0xfff0c0 : 0xff8a5a, 5, 0.4);
@@ -223,7 +248,7 @@ export class Boss {
   }
   updateDeath(dt) {
     if (Math.random() < dt * 30) this.fx.emit(this.eye.position.x + rr(-3, 3), this.eye.position.y + rr(-3, 3), this.eye.position.z + rr(-3, 3), 6, 0xff7a3a, 7, 0.7);
-    this.eye.rotation.z += dt * 2; this.eye.position.y += dt * 0.8; this.eyeLight.intensity = Math.max(0, this.eyeLight.intensity - dt * 30);
+    this.mass.update(dt, null); this.eye.rotation.z += dt * 2; this.eye.position.y += dt * 0.8; this.eyeLight.intensity = Math.max(0, this.eyeLight.intensity - dt * 30);
     this.eye.scale.multiplyScalar(Math.max(0.2, 1 - dt * 0.25));
     if (this.t > 4) this.eye.visible = false;
   }
@@ -233,7 +258,8 @@ export class Boss {
     const e = this.eye;
     this.eyeLight.intensity = 90 + 30 * Math.sin(this.time * 3);
     const lookTarget = new THREE.Vector3(P.x, 1.2, P.z);
-    if (this.es !== 'beam') e.lookAt(lookTarget);
+    if (this.es !== 'beam') this.mass.lookAt(lookTarget);
+    this.mass.update(dt, lookTarget);
     const bob = Math.sin(this.time * 1.6) * 0.35;
     const setY = (y, k = 3) => { e.position.y += (y - e.position.y) * Math.min(1, dt * k); };
     const seq = ['tentacles', 'beam', 'tentacles', 'summon', 'beam'];
@@ -245,7 +271,7 @@ export class Boss {
       case 'tentacles': setY(6 + bob, 2); if (this.t > 5.5 && !this.anyTent(['tele', 'rise', 'up'])) { this.es = 'idle'; this.t = 0; } break;
       case 'summon': setY(8, 2); if (this.t > 1.6) { this.es = 'idle'; this.t = 0; } break;
       case 'beam': this.updateBeam(dt, P, setY); break;
-      case 'stunned': setY(2.3, 2.5); e.rotation.z += (Math.sin(this.time * 7) * 0.05 - e.rotation.z) * 0.2; if (this.t > 9.5) { this.vulnerable = false; this.es = 'recover'; this.t = 0; e.rotation.z = 0; this.cb.say?.('YOU ARE NOTHING.'); } break;
+      case 'stunned': setY(2.3, 2.5); this.mass.core.rotation.z += (Math.sin(this.time * 7) * 0.05 - this.mass.core.rotation.z) * 0.2; if (this.t > 9.5) { this.vulnerable = false; this.es = 'recover'; this.t = 0; this.mass.core.rotation.z = 0; this.cb.say?.('YOU ARE NOTHING.'); } break;
       case 'recover': setY(7, 2); if (this.t > 1.5) { this.es = 'idle'; this.t = 0; } break;
       default: break;
     }
@@ -286,11 +312,11 @@ export class Boss {
     this.beam.position.set(e.position.x, 0.45, e.position.z);
     if (this.beamPhase === 'wind') {
       this.beam.rotation.y = -this.beamAng; this.beam.material.opacity = 0.25 + 0.2 * Math.sin(this.time * 24); this.beam.scale.y = 0.2;
-      e.lookAt(new THREE.Vector3(Math.cos(this.beamAng) * 10, 2, Math.sin(this.beamAng) * 10));
+      this.mass.lookAt(new THREE.Vector3(Math.cos(this.beamAng) * 10, 2, Math.sin(this.beamAng) * 10));
       if (this.t > 1.4) { this.beamPhase = 'fire'; this.t = 0; sfx.zap(1); this.cb.shake?.(0.3); }
     } else if (this.beamPhase === 'fire') {
       this.beamAng += this.beamDir * 0.85 * dt; this.beam.rotation.y = -this.beamAng; this.beam.material.opacity = 0.8; this.beam.scale.y = 1;
-      e.lookAt(new THREE.Vector3(Math.cos(this.beamAng) * 10, 2, Math.sin(this.beamAng) * 10));
+      this.mass.lookAt(new THREE.Vector3(Math.cos(this.beamAng) * 10, 2, Math.sin(this.beamAng) * 10));
       this.beamHit -= dt;
       if (P.alive && P.y < 0.85 && !P.dashing && this.beamHit <= 0) {
         const dx = P.x - e.position.x, dz = P.z - e.position.z, d = Math.hypot(dx, dz), da = angDiff(Math.atan2(dz, dx), this.beamAng);

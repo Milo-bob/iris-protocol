@@ -30,7 +30,20 @@
   #alarmwrap { right: 12px; top: 10px; width: 20%; text-align: right; }
   #alarmfill { background: linear-gradient(90deg, #ffc233, #ff2a1a); width: 0; }
   #objective { right: 12px; bottom: 10px; text-align: right; max-width: 38%; color: #ffd36b; }
-  #cross { left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; background: #ffd36b; border-radius: 50%; opacity: .7; }
+  #cross { left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; background: #ffd36b; border-radius: 50%; opacity: .75; }
+  #cross::after { content: ''; position: absolute; left: -9px; top: -9px; width: 20px; height: 20px; border: 1px solid rgba(255, 211, 107, .45); border-radius: 50%; }
+  #ammowrap { left: 12px; bottom: 74px; letter-spacing: 2px; }
+  #ammo { font-size: 1.5em; color: #ffd36b; }
+  #ammowrap.low #ammo { color: #ff4a2a; }
+  #alarmwrap, #viswrap { display: none; }   /* the alarm and visibility systems run silently in the background */
+  #viswrap { right: 12px; top: 58px; width: 20%; text-align: right; }
+  #visfill { background: linear-gradient(90deg, #3a6a8a, #ffc233, #ff4a2a); width: 100%; }
+  #toast { left: 50%; bottom: 30%; transform: translateX(-50%); opacity: 0; transition: opacity .3s; letter-spacing: 3px; color: #ffe08a; }
+  #hideov { inset: 0; display: none; z-index: 8; background: linear-gradient(#000 0, #000 34%, rgba(0, 0, 0, .55) 41%, rgba(0, 0, 0, 0) 46%, rgba(0, 0, 0, 0) 54%, rgba(0, 0, 0, .55) 59%, #000 66%, #000 100%); }
+  #hideov.on { display: block; }
+  #hideov span { position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%); font-size: clamp(11px, 1.5vw, 17px); letter-spacing: 3px; color: #8a7a6a; }
+  #vignette.dread { box-shadow: inset 0 0 200px 60px rgba(40, 0, 50, .65); animation: pulse2 1.1s infinite; }
+  @keyframes pulse2 { 50% { box-shadow: inset 0 0 240px 90px rgba(60, 0, 70, .8); } }
   #vignette { inset: 0; box-shadow: inset 0 0 0 0 rgba(255, 20, 10, 0); transition: box-shadow .3s; }
   #vignette.hurt { box-shadow: inset 0 0 160px 40px rgba(255, 20, 10, .75); transition: none; }
   #vignette.spotted { box-shadow: inset 0 0 140px 10px rgba(255, 30, 10, .35); animation: pulse 0.9s infinite; }
@@ -65,14 +78,18 @@
 <body>
 <div id="stage">
   <div id="vignette" class="hud"></div>
-  <div id="top" class="hud hudgame"><b>THE IRIS PROTOCOL</b> &nbsp;prototype M2<br><span id="fps">-</span> FPS &nbsp;|&nbsp; Shadows: <span id="sh"></span></div>
+  <div id="top" class="hud hudgame"><b>THE IRIS PROTOCOL</b> &nbsp;prototype M4<br><span id="fps">-</span> FPS &nbsp;|&nbsp; Shadows: <span id="sh"></span></div>
   <div id="hpwrap" class="hud hudgame"><div>HEALTH</div><div class="meter"><div id="hpfill"></div></div></div>
   <div id="alarmwrap" class="hud hudgame"><div id="alarmtxt">ALARM</div><div class="meter"><div id="alarmfill"></div></div></div>
+  <div id="viswrap" class="hud hudgame"><div id="vistxt">VISIBILITY</div><div class="meter"><div id="visfill"></div></div></div>
+  <div id="ammowrap" class="hud hudgame"><div>PISTOL</div><div id="ammo">12 / 24</div></div>
+  <div id="toast" class="hud hudgame"></div>
   <div id="objective" class="hud hudgame">OBJECTIVE: Escape Detention Sector 7. Find your file.</div>
   <div id="cross" class="hud hudgame"></div>
   <div id="lock" class="hud hudgame" style="left:50%;top:22%;transform:translateX(-50%);font-size:clamp(12px,1.8vw,20px);color:#ffd36b">Click to capture the mouse</div>
   <div id="zone" class="hud hudgame"><div id="zoneName"></div><div id="zoneSub"></div></div>
-  <div id="pause" class="hud"><div style="text-align:center">PAUSED<div style="margin-top:18px;font-size:.32em;letter-spacing:4px;color:#ffc233">"I STILL SEE YOU, PRISONER ZERO. STOPPING TIME WILL NOT SAVE YOU."</div><div style="margin-top:22px;font-size:.26em;letter-spacing:4px;opacity:.75">P: CONTINUE &nbsp;&middot;&nbsp; BACKSPACE: RESTART</div></div></div>
+  <div id="pause" class="hud"><div style="text-align:center">PAUSED<div style="margin-top:18px;font-size:.32em;letter-spacing:4px;color:#ffc233">"I STILL SEE YOU, PRISONER ZERO. STOPPING TIME WILL NOT SAVE YOU."</div><div style="margin-top:22px;font-size:.24em;letter-spacing:3px;line-height:1.9;opacity:.8">WASD MOVE &middot; SHIFT SNEAK &middot; CTRL SPRINT &middot; SPACE JUMP &middot; W W DASH<br>LMB: CHOKE FROM BEHIND / PUNCH WHEN HUNTED / SHOOT AT RANGE &middot; R RELOAD<br>E: HIDE (DUMPSTERS, LOCKERS) &middot; INTERACT<br>P: CONTINUE &nbsp;&middot;&nbsp; BACKSPACE: RESTART</div></div></div>
+  <div id="hideov" class="hud"><span>E / MOVE: LEAVE HIDING PLACE</span></div>
   <div id="bars"><div class="bar top"></div><div class="bar bot"></div></div>
   <div id="caption" class="hud"></div>
   <div id="titlecard" class="hud">THE IRIS PROTOCOL</div>
@@ -82,7 +99,7 @@
   <div id="bossbar" class="hud hudgame"><div id="bossname">THE IRIS</div><div class="meter"><div id="bossfill"></div></div></div>
   <div id="fade"></div>
   <div id="endcard"><h1>THE EYE IS BLIND</h1><p>THE IRIS PROTOCOL: TERMINATED</p><p>TO BE CONTINUED...</p><p style="opacity:.7">Press ENTER to play again</p></div>
-  <div id="death"><h1>ARRESTED</h1><p>Prisoner_0 has been recaptured.</p><p>Press R to try again</p></div>
+  <div id="death"><h1 id="deathTitle">ARRESTED</h1><p id="deathSub">Prisoner_0 has been recaptured.</p><p>Press R to try again</p></div>
   <div id="loading"><div>LOADING</div><div id="barwrap"><div id="bar"></div></div><div id="startmsg">CLICK OR PRESS ANY KEY TO BEGIN</div></div>
 </div>
 <script type="module" src="js/main.js"></script>

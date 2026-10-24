@@ -367,6 +367,21 @@ export function buildCity(scene, P) {
     if (rnd() < 0.18) { const p = onFace(b, Math.floor(rnd() * 4), rr(-0.4, 0.4), 0, 0.5); (rnd() < 0.5 ? place.trashClean : place.trashRust).push({ ...p, s: 1.1 }); }
     if (b.dist === 'industry' && rnd() < 0.4) { const p = onFace(b, Math.floor(rnd() * 4), rr(-0.3, 0.3), 0, 0.02); place.shutter.push({ ...p, s: 2.0 }); }
   }
+
+  // ----- hiding places: dumpsters against building walls (the player can climb inside, E) -----
+  const hideSpots = [];
+  const overlaps = (x, z, hw, hd) => colliders.some((c) => c.h > 0.5 && x + hw > c.minX && x - hw < c.maxX && z + hd > c.minZ && z - hd < c.maxZ);
+  for (const b of blds) {
+    if (b.h < 4 || b.dist === 'avenue' || Math.random() > 0.2) continue;
+    const f = Math.floor(Math.random() * 4), F = FACES[f], p = onFace(b, f, (Math.random() - 0.5) * 0.7, 0, 0.58);
+    const w = F.nz !== 0 ? 1.9 : 1.0, d = F.nz !== 0 ? 1.0 : 1.9;
+    if (overlaps(p.x, p.z, w / 2 + 0.1, d / 2 + 0.1) || overlaps(p.x + F.nx * 1.5, p.z + F.nz * 1.5, 0.45, 0.45)) continue;
+    L.dark.push(boxG(w, 1.1, d, p.x, 0, p.z, 2, 0x4f7a5c), boxG(w + 0.12, 0.1, d + 0.12, p.x, 1.1, p.z, 2, 0x6a8a74), boxG(F.nz !== 0 ? 1.7 : 0.05, 0.05, F.nz !== 0 ? 0.05 : 1.7, p.x + F.nx * 0.5, 1.0, p.z + F.nz * 0.5, 1, 0x050505));
+    addCollider(p.x, p.z, w, d, 1.2);
+    hideSpots.push({ id: 'c' + hideSpots.length, x: p.x, z: p.z, yaw: Math.atan2(F.nx, F.nz), kind: 'dumpster', r: 2.1 });
+  }
+  // ammo crates in the prison yards
+  const ammo = yardCells.filter((y, i) => y.cx !== 3 * CELL && i % 2 === 0).map((y) => ({ x: y.cx - 3.2, z: y.cz - 3.4 }));
   for (let i = -N; i <= N; i++) for (let j = -N; j <= N; j++) {
     if (Math.abs(i) <= 1 && Math.abs(j) <= 1) continue;
     for (const [sx, sz] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
@@ -495,5 +510,5 @@ export function buildCity(scene, P) {
 
   // prison start yard: the player starts in cell (3,3)
   const spawn = { x: 3 * CELL, z: 3 * CELL };
-  return { root, colliders, lights, spawn };
+  return { root, colliders, lights, spawn, hideSpots, ammo };
 }

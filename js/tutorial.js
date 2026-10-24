@@ -3,7 +3,7 @@ import { instanced } from './assets.js';
 import { sfx } from './audio.js';
 
 // ---------------------------------------------------------------------------
-// Chalk drawings left by earlier prisoners: they teach the controls (jump, sneak, back-stab, strike, dash, sprint)
+// Chalk drawings left by earlier prisoners: they teach the controls (jump, sneak, choke from behind, punch, shoot, hide, dash, sprint)
 // and mark the way (arrows, the tower, danger, the entrance, the file, the elevator).
 // There is no instruction text anywhere.
 // ---------------------------------------------------------------------------
@@ -66,6 +66,17 @@ const DRAW = {
     figure(300, 190, 72, { armL: [-0.9, 0.0], armR: [0.7, 0.6], legL: [-0.8, 0.8], legR: [0.95, 0.5] });
     for (let i = 0; i < 4; i++) line(30 + i * 15, 170 + i * 45, 190 + i * 15, 170 + i * 45);
   },
+  gun: ({ g, line, circle, figure }) => {                           // a figure aiming a pistol at a target
+    figure(110, 190, 66, { armL: [-0.5, 0.5], armR: [1.15, 0.0] });
+    line(215, 238, 258, 238); line(258, 238, 258, 264);
+    g.setLineDash([14, 16]); line(268, 236, 350, 236); g.setLineDash([]);
+    circle(420, 236, 62); circle(420, 236, 28); line(420, 160, 420, 312); line(344, 236, 496, 236);
+  },
+  hide: ({ g, line, eye }) => {                                      // a watcher, and someone peeking out of a hiding place
+    eye(256, 100, 80); line(150, 40, 362, 160);
+    g.strokeRect(150, 250, 212, 150); line(138, 250, 374, 250); line(150, 330, 362, 330);
+    eye(256, 365, 30);
+  },
   arrow: ({ line, arrow }) => { arrow(256, 470, 256, 90); },
   arrowUp: ({ g, line, arrow }) => { arrow(256, 470, 256, 220); g.strokeRect(170, 40, 170, 150); line(256, 70, 215, 130); line(256, 70, 297, 130); },   // arrow toward an elevator
   tower: ({ g, line, circle, eye }) => {                          // the tower with the eye above it
@@ -122,6 +133,19 @@ export function buildTutorial(scene, city, P0, cityColliders, fx) {
     cityColliders.push({ minX: cx - 3.1, maxX: cx - 2.3, minZ: cz - 3.3, maxZ: cz - 2.2, h: 2.0 });
   }
   decal('strike', cx - 0.6, cz - 2.6, facePlusX + Math.PI);
+  decal('gun', cx + 1.2, cz + 0.6, faceMinusX, 3.0);
+
+  // 2b) hiding: a dumpster in the yard (E to climb in)
+  const hideSpots = [], ammo = [{ x: cx + 3.3, z: cz + 0.3 }];
+  {
+    const hx = cx + 3.8, hz = cz - 2.4, mat = new THREE.MeshStandardMaterial({ color: 0x4f7a5c, roughness: 0.7, metalness: 0.3 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.1, 1.9), mat); body.position.set(hx, 0.55, hz); body.castShadow = true; group.add(body);
+    const lid = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.1, 2.02), new THREE.MeshStandardMaterial({ color: 0x6a8a74, roughness: 0.7, metalness: 0.3 })); lid.position.set(hx, 1.15, hz); group.add(lid);
+    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 1.7), new THREE.MeshBasicMaterial({ color: 0x050505 })); slit.position.set(hx - 0.5, 1.0, hz); group.add(slit);
+    cityColliders.push({ minX: hx - 0.5, maxX: hx + 0.5, minZ: hz - 0.95, maxZ: hz + 0.95, h: 1.2 });
+    hideSpots.push({ id: 'tut', x: hx, z: hz, yaw: -Math.PI / 2, kind: 'dumpster', r: 2.1 });
+    decal('hide', hx - 1.9, hz, facePlusX, 2.6);
+  }
 
   // 3) sneak + back-stab beside the north gap, the guard with his back turned
   decal('sneak', cx, cz - 7.2, faceMinusZ, 3.4);
@@ -133,18 +157,30 @@ export function buildTutorial(scene, city, P0, cityColliders, fx) {
   const gz = 32.5;                                                  // the street that leads to the prison gate
   arrowAt(cx, cz - 2.2, 0, -1, 1.8);                                // inside the yard, toward the open north gap
   arrowAt(cx - 5.8, cz - 0.2, 0, -1, 1.8); arrowAt(cx - 5.8, cz - 3.4, 0, -1, 1.8);   // beyond the barrier, around the corner
-  walk(cx, gz, 1.5, gz, 5, (x) => x > cx - 2);                      // west along the street, through the gate
+  walk(cx, gz, 1.5, gz, 26, (x) => x > cx - 2);                      // west along the street, through the gate
   decal('tower', 14.5, gz, dirYaw(-1, 0), 3.2);
   decal('tower', 0, 27.5, dirYaw(0, -1), 3.2);
-  walk(0, gz - 1, 0, 20, 5, (x, z) => Math.abs(z - 27.5) < 2.2);   // north along the avenue to the ring gate
+  walk(0, gz - 1, 0, 20, 30, (x, z) => Math.abs(z - 27.5) < 2.2);   // north along the avenue to the ring gate
   decal('danger', -3.9, 24, dirYaw(0, -1), 1.7); decal('danger', 3.9, 24, dirYaw(0, -1), 1.7);   // the guards at the ring gate
-  walk(0, 17.5, 0, 12.6, 4, null);                                  // inside the ring
   decal('enter', 0, 13.6, dirYaw(0, -1), 2.4);                      // the tower door
 
   // bag physics
   const swing = { ax: 0, az: 0, vx: 0, vz: 0 };
   return {
-    group,
+    group, hideSpots, ammo,
+    // a bullet along the ray (o, d): distance to the punching bag or -1
+    shootDummies(ox, oy, oz, dx, dy, dz, maxT) {
+      const bx = cx - 2.7, bz = cz - 2.55, h2 = dx * dx + dz * dz; if (h2 < 1e-6) return -1;
+      const s = ((bx - ox) * dx + (bz - oz) * dz) / h2; if (s < 0.5 || s > maxT) return -1;
+      const ex = bx - (ox + dx * s), ez = bz - (oz + dz * s), y = oy + dy * s;
+      if (ex * ex + ez * ez > 0.42 * 0.42 || y < 0.9 || y > 2.1) return -1;
+      swing.vx += dz * 4; swing.vz += -dx * 4; fx.emit(ox + dx * s, y, oz + dz * s, 8, 0xfff0c0, 3, 0.3, 5); sfx.hit(0.6);
+      return s;
+    },
+    bagNear(P, yaw, range = 2.4) {
+      const dx = cx - 2.7 - P.x, dz = cz - 2.55 - P.z, d = Math.hypot(dx, dz);
+      return d < range + 0.2 && (d < 1.0 || Math.abs(Math.atan2(Math.sin(Math.atan2(dx, dz) - yaw), Math.cos(Math.atan2(dx, dz) - yaw))) < 1.0);
+    },
     hitDummies(P, yaw, range, half) {
       const bx = cx - 2.7, bz = cz - 2.55, dx = bx - P.x, dz = bz - P.z, d = Math.hypot(dx, dz);
       if (d > range + 0.4) return false;

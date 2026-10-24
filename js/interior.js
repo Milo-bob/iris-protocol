@@ -108,7 +108,7 @@ export function buildFloor(index, P) {
   const group = new THREE.Group();
   const colliders = [], lights = [], decoSolid = [], decoGlow = [], walls = [];
   const place = { barrel: [], trash: [], cardboard: [], barrier: [], cam01: [], lamp02: [] };
-  const sprites = [];
+  const sprites = [], hideSpots = [], ammo = [];
   const screens = [];   // {x,y,z,w,h,ry,kind}
   const addCol = (x, z, w, d, h) => colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2, h });
   const box = (w, h, d, x, y, z, hex, collide = true) => { decoSolid.push(boxG(w, h, d, x, y, z, 2, hex)); if (collide) addCol(x, z, w, d, y + h); };
@@ -206,6 +206,15 @@ export function buildFloor(index, P) {
     const pieces = SETS[def.theme], names = Object.keys(pieces);
     const anchors = [[-0.27, -0.25], [0.27, -0.25], [-0.27, 0.25], [0.27, 0.25], [0, 0]].sort(() => rnd() - 0.5).slice(0, 3 + (rnd() < 0.5 ? 1 : 0));
     anchors.forEach((a) => pieces[pk(names)](m.cx + a[0] * w, m.cz + a[1] * d));
+    // lockers along the north wall: hiding places (E)
+    for (let k = 0, nl = 1 + (rnd() < 0.6 ? 1 : 0); k < nl; k++) {
+      const lx = m.x0 + 2.4 + rnd() * Math.max(0.5, w - 4.8), lz = m.z0 + 0.62;
+      box(0.95, 2.05, 0.7, lx, 0, lz, 0x4e545c); glow(0.82, 0.04, 0.02, lx, 0.35, lz + 0.36, 0x07070a);
+      for (let v = 0; v < 4; v++) glow(0.5, 0.035, 0.02, lx, 1.55 + v * 0.1, lz + 0.36, 0x07070a);
+      glow(0.05, 0.22, 0.03, lx + 0.32, 1.0, lz + 0.37, 0x9a9aa2);
+      hideSpots.push({ id: 'f' + index + '_' + hideSpots.length, x: lx, z: lz, yaw: 0, kind: 'locker', r: 2.1 });
+    }
+    if (rnd() < 0.55) ammo.push({ x: m.cx + (rnd() - 0.5) * (w - 6), z: m.cz + (rnd() - 0.5) * (d - 6) });
     // equipment along the west wall
     if (rnd() < 0.7) for (let k = 0; k < 3; k++) rack(m.x0 + 0.7, m.cz + (k - 1) * 1.3);
     spot(m.cx + (rnd() - 0.5) * w * 0.4, m.cz + (rnd() - 0.5) * d * 0.4, pk([0xff4a3a, 0xffc233, 0x80b0ff]), 26);
@@ -233,6 +242,20 @@ export function buildFloor(index, P) {
     const x = wx(wc.i) + dir[0] * (CS / 2 + 0.04), z = wz(wc.j) + dir[1] * (CS / 2 + 0.04);
     if (nb < 40 && rnd() < 0.6) { const m = new THREE.Mesh(banGeo, new THREE.MeshBasicMaterial({ map: banTex[nb % 3], color: 0xbbbbbb })); m.position.set(x, 2.0, z); m.rotation.y = dir[2]; group.add(m); nb++; }
     else { const sp = new THREE.Sprite(eyeMat); sp.position.set(x + dir[0] * 0.1, rnd() * 1.4 + 1.4, z + dir[1] * 0.1); sp.scale.set(1.6, 0.8, 1); group.add(sp); }
+  }
+
+  // the Dictator seeps into the tower: black veins with eyes crawl up the walls, thicker on every floor
+  if (index >= 1 && wallCells.length) {
+    const tubes = [], tm = new THREE.MeshStandardMaterial({ color: 0x07030a, roughness: 0.35, emissive: 0x16041e });
+    for (let k = 0, nT = 6 + index * 7; k < nT; k++) {
+      const wc = wallCells[Math.floor(rnd() * wallCells.length)];
+      const dir = DIRS.find(([di, dj]) => at(wc.i + di, wc.j + dj) && at(wc.i + di * 2, wc.j + dj * 2)); if (!dir) continue;
+      const bx = wx(wc.i) + dir[0] * (CS / 2 + 0.05), bz = wz(wc.j) + dir[1] * (CS / 2 + 0.05), h = 1.2 + rnd() * 2.4, side = rnd() * 6, pts = [];
+      for (let s = 0; s <= 6; s++) { const u = s / 6, w = Math.sin(u * 6 + side) * 0.35, off = 0.04 + 0.1 * Math.abs(Math.sin(u * 4 + side)); pts.push(new THREE.Vector3(bx + dir[0] * off + (dir[1] ? w : 0), u * h, bz + dir[1] * off + (dir[0] ? w : 0))); }
+      tubes.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 10, 0.06 + rnd() * 0.08, 5, false));
+      if (k % 2 === 0) { const sp = new THREE.Sprite(eyeMat); sp.position.set(bx + dir[0] * 0.14, 0.7 + rnd() * 1.6, bz + dir[1] * 0.14); sp.scale.set(0.9, 0.45, 1); group.add(sp); }
+    }
+    if (tubes.length) group.add(new THREE.Mesh(mergeGeometries(tubes, false), tm));
   }
 
   // elevators
@@ -293,7 +316,7 @@ export function buildFloor(index, P) {
     const trail = (path, kind, skipFirst = 5) => {
       for (let i = 0; i < path.length - 1; i++) {
         const a = path[i], b = path[i + 1], dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz);
-        for (let t = i === 0 ? skipFirst : 4; t < L - 3; t += 6) group.add(chalkMesh(kind, a.x + dx / L * t, a.z + dz / L * t, dirYaw(dx, dz), 1.7));
+        for (let t = i === 0 ? skipFirst : 4; t < L - 3; t += 20) group.add(chalkMesh(kind, a.x + dx / L * t, a.z + dz / L * t, dirYaw(dx, dz), 1.7));
       }
     };
     if (fileRoom) {
@@ -315,11 +338,11 @@ export function buildFloor(index, P) {
       else spawn.push({ type, x: p.x, z: p.z, opts: { node } });
     }
   }
-  if (def.lock === 'censor') { const r = exitRoom, p = posIn(r); spawn.push({ type: 'robot', x: p.x, z: p.z, opts: { post: true, hp: 460, tint: 0xe0a030, scale: 1.25, name: 'CHIEF CENSOR', censor: true } }); }
+  if (def.lock === 'censor') { const r = exitRoom, p = posIn(r); spawn.push({ type: 'robot', x: p.x, z: p.z, opts: { post: true, hp: 300, tint: 0xe0a030, scale: 1.25, name: 'CHIEF CENSOR', censor: true } }); }
 
   const sp = { x: startRoom.m.cx, z: startRoom.m.cz + 0.5 };
   return {
-    group, colliders, lights, nodes, spawn, def, theme, fog: theme.fog,
+    group, colliders, lights, nodes, spawn, def, theme, fog: theme.fog, hideSpots, ammo,
     start: sp, startYaw: 0, startElev, exitElev, file, exitRoom: exitRoom.m, bounds: { w: GW * CS, h: GH * CS },
   };
 }

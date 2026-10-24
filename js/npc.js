@@ -10,13 +10,15 @@ import { sfx } from './audio.js';
 // ---------------------------------------------------------------------------
 
 const TYPES = {
-  citizen:  { prefix: 'Citizen',  digits: 5, hp: 30,  walk: 1.4, run: 4.6, tint: 0x80868e, scale: 0.97, model: 'soldier', pause: 0.5 },
-  prisoner: { prefix: 'Prisoner', digits: 3, hp: 30,  walk: 1.3, run: 4.4, tint: 0xe8863a, scale: 0.98, model: 'soldier', pause: 0.6 },
-  guard:    { prefix: 'Guard',    digits: 4, hp: 70,  walk: 1.9, run: 5.0, tint: 0x8e2a2a, scale: 1.02, model: 'soldier', range: 17, fov: 110, pause: 0.25, atk: { range: 2.0, wind: 0.45, dmg: 9, cd: 1.2 } },
-  robot:    { prefix: 'Unit',     digits: 4, hp: 170, walk: 1.5, run: 3.7, tint: 0xffffff, emissive: 0x4a0a00, scale: 1.12, model: 'xbot', range: 20, fov: 100, pause: 0.15, atk: { range: 2.4, wind: 0.75, dmg: 20, cd: 1.9 } },
+  citizen:  { prefix: 'Citizen',  digits: 5, hp: 30,  walk: 1.4, run: 4.6, tint: 0x80868e, scale: 0.97, model: 'soldier', pause: 0.5, choke: 1.3 },
+  prisoner: { prefix: 'Prisoner', digits: 3, hp: 30,  walk: 1.3, run: 4.4, tint: 0xe8863a, scale: 0.98, model: 'soldier', pause: 0.6, choke: 1.3 },
+  guard:    { prefix: 'Guard',    digits: 4, hp: 70,  walk: 1.9, run: 5.0, tint: 0x8e2a2a, scale: 1.02, model: 'soldier', range: 17, fov: 110, pause: 0.25, atk: { range: 2.0, wind: 0.4, dmg: 14, cd: 1.0 }, gun: { range: 16, wind: 0.55, cd: 1.7 }, choke: 1.6 },
+  robot:    { prefix: 'Unit',     digits: 4, hp: 170, walk: 1.5, run: 3.7, tint: 0xffffff, emissive: 0x4a0a00, scale: 1.12, model: 'xbot', range: 20, fov: 100, pause: 0.15, atk: { range: 2.4, wind: 0.75, dmg: 20, cd: 1.9 }, armor: { fist: 0.35, gun: 0.55 }, choke: 2.6 },
   drone:    { prefix: 'Drone',    digits: 4, hp: 40,  walk: 3.0, run: 6.5, range: 18, fov: 130, pause: 0 },
 };
 const HOSTILE = new Set(['guard', 'robot', 'drone']);
+const AGGRO = new Set(['chase', 'attack', 'shoot']);
+const CALM = new Set(['patrol', 'post', 'idle']);
 const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
 class Grid {   // spatial buckets for colliders
@@ -81,8 +83,9 @@ export function getModels() {
 }
 
 export class NPCManager {
-  constructor(scene, colliders, fx, cbs) {
-    this.scene = scene; this.grid = new Grid(colliders); this.fx = fx; this.cb = cbs;
+  constructor(scene, colliders, fx, cbs, director) {
+    this.scene = scene; this.grid = new Grid(colliders); this.fx = fx; this.cb = cbs; this.dir = director;
+    this.hideSpots = []; this.bodies = []; this.visits = new Map();
     this.npcs = []; this.nodes = []; this.nodeMap = new Map(); this.models = {};
     this.projectiles = []; this.alarm = 0; this.chasers = 0; this.time = 0; this.spawnPoint = { x: 0, z: 0 };
     this.custom = false; this.droneH = 3.2; this.droneLow = 2.2; this.dead = false;
@@ -109,6 +112,36 @@ export class NPCManager {
     const dx = x1 - x0, dz = z1 - z0, d = Math.hypot(dx, dz), steps = Math.min(30, Math.ceil(d / 1.2));
     for (let s = 1; s < steps; s++) { const t = s / steps; if (this.blocked(x0 + dx * t, z0 + dz * t, 0.05, minH)) return false; }
     return true;
+  }
+
+  clear(x0, z0, x1, z1, r = 0.5) {   // can something with radius r walk straight from A to B?
+    const dx = x1 - x0, dz = z1 - z0, d = Math.hypot(dx, dz); if (d > 30) return false;
+    const steps = Math.ceil(d / 0.5);
+    for (let s = 1; s <= steps; s++) { const t = s / steps; if (this.blocked(x0 + dx * t, z0 + dz * t, r, 0.6)) return false; }
+    return true;
+  }
+  route(x0, z0, x1, z1) {   // breadth-first search over the patrol graph
+    const A = this.nearestNode(x0, z0), B = this.nearestNode(x1, z1); if (!A || !B) return null; if (A === B) return [A];
+    const prev = new Map([[A, null]]), q = [A];
+    for (let qi = 0; qi < q.length; qi++) { const n = q[qi]; if (n === B) break; for (const m of n.n) if (!prev.has(m)) { prev.set(m, n); q.push(m); } }
+    if (!prev.has(B)) return null;
+    const out = []; for (let n = B; n; n = prev.get(n)) out.push(n); return out.reverse();
+  }
+  // walk an agent (needs x, z, moveToward) toward a point, around corners via the patrol graph
+  navTo(a, tx, tz, speed, dt, free = false) {
+    if (free) return a.moveToward(tx, tz, speed, dt, true);
+    a.clrT = (a.clrT || 0) - dt;
+    if (a.clrT <= 0) { a.clr = this.clear(a.x, a.z, tx, tz); a.clrT = 0.12; }
+    if (a.clr) { a.path = null; return a.moveToward(tx, tz, speed, dt); }
+    a.pathT = (a.pathT || 0) - dt;
+    if (!a.path || a.pathT <= 0) { a.path = this.route(a.x, a.z, tx, tz); a.pi = 0; a.pathT = 0.8; }
+    if (a.path && a.path.length) {
+      while (a.pi < a.path.length - 1 && Math.hypot(a.path[a.pi].x - a.x, a.path[a.pi].z - a.z) < 1.8) a.pi++;
+      const wp = a.path[a.pi];
+      if (a.pi === a.path.length - 1 && Math.hypot(wp.x - a.x, wp.z - a.z) < 1.8) return a.moveToward(tx, tz, speed, dt);
+      a.moveToward(wp.x, wp.z, speed, dt); return Math.hypot(tx - a.x, tz - a.z);
+    }
+    return a.moveToward(tx, tz, speed, dt);
   }
 
   // ----- patrol graph on the street grid -----
@@ -217,58 +250,113 @@ export class NPCManager {
     return holder;
   }
 
-  // ----- alerts & projectiles -----
+  // ----- alerts, noise & projectiles -----
   alertNearby(x, z, radius, to) {
     for (const n of this.npcs) {
-      if (!HOSTILE.has(n.type) || n.state === 'ko' || n.state === 'chase' || n.state === 'attack') continue;
-      if (Math.hypot(n.x - x, n.z - z) < radius) { n.lastSeen.set(to.x, to.z); n.state = 'search'; n.searchT = 9; n.meter = Math.max(n.meter, 0.7); }
+      if (!HOSTILE.has(n.type) || n.state === 'ko' || n.state === 'choked' || AGGRO.has(n.state)) continue;
+      if (Math.hypot(n.x - x, n.z - z) < radius) n.hear(to.x, to.z, 9, 0.7);
     }
   }
-  fire(from, P) {
+  // a sound at (x, z): calm hostiles in earshot go and look (through walls the radius is cut down)
+  makeNoise(x, z, radius) {
+    let heard = 0;
+    for (const n of this.npcs) {
+      if (!HOSTILE.has(n.type) || n.state === 'ko' || n.state === 'choked' || AGGRO.has(n.state)) continue;
+      const d = Math.hypot(n.x - x, n.z - z), r = this.los(n.x, n.z, x, z, 1.9) ? radius : radius * 0.55;
+      if (d < r) { n.hear(x, z, 11, 0.55); heard++; }
+    }
+    this.cb.onNoise?.(x, z, radius);
+    return heard;
+  }
+  fire(from, P, spread = 0) {
     const geo = this._pg || (this._pg = new THREE.SphereGeometry(0.17, 8, 6)), mat = this._pm || (this._pm = new THREE.MeshBasicMaterial({ color: 0xff4a24 }));
     const m = new THREE.Mesh(geo, mat); m.position.set(from.x, from.y, from.z);
-    const dx = P.x - from.x, dy = 1.1 - from.y, dz = P.z - from.z, d = Math.hypot(dx, dy, dz), sp = 15;
+    const tx = P.x + (rnd() - 0.5) * spread, tz = P.z + (rnd() - 0.5) * spread;
+    const dx = tx - from.x, dy = 1.1 - from.y, dz = tz - from.z, d = Math.hypot(dx, dy, dz), sp = 15;
     this.root.add(m); this.projectiles.push({ m, vx: dx / d * sp, vy: dy / d * sp, vz: dz / d * sp, life: 3 });
     sfx.zap(this.vol(from.x, from.z, P));
   }
   vol(x, z, P) { return Math.max(0.1, 1 - Math.hypot(x - P.x, z - P.z) / 30); }
 
-  meleeHit(P, yaw, { range = 2.7, half = 1.0, dmg = 22 } = {}) {
+  // fists: everything in the arc in front of the player
+  meleeHit(P, yaw, { range = 2.4, half = 0.95, dmg = 13, src = 'fist' } = {}) {
     const hits = [];
     for (const n of this.npcs) {
-      if (!n.active || n.state === 'ko') continue;
+      if (!n.active || n.state === 'ko' || n.state === 'choked') continue;
       const dx = n.x - P.x, dz = n.z - P.z, d = Math.hypot(dx, dz);
       if (d > range + 0.2 || (n.type === 'drone' && n.y > 3.4)) continue;
       if (d > 1.0 && Math.abs(angDiff(Math.atan2(dx, dz), yaw)) > half) continue;
-      const unaware = ['patrol', 'post', 'idle'].includes(n.state) && n.meter < 0.35;
-      const behind = Math.sin(n.yaw) * (P.x - n.x) + Math.cos(n.yaw) * (P.z - n.z) < 0;
-      const back = unaware && behind && HOSTILE.has(n.type);
-      n.takeHit(dmg * (back ? 4 : 1), dx / (d || 1), dz / (d || 1), back, P);
-      hits.push({ n, back });
+      n.takeHit(dmg, dx / (d || 1), dz / (d || 1), src, P, false);
+      hits.push({ n });
     }
     return hits;
   }
+  punchTarget(P, yaw, range = 2.4, half = 0.95) {   // someone who already hunts the player and stands within fist reach
+    for (const n of this.npcs) {
+      if (!n.active || !AGGRO.has(n.state) || (n.type === 'drone' && n.y > 3.4)) continue;
+      const dx = n.x - P.x, dz = n.z - P.z, d = Math.hypot(dx, dz);
+      if (d <= range && (d < 1.0 || Math.abs(angDiff(Math.atan2(dx, dz), yaw)) <= half)) return n;
+    }
+    return null;
+  }
+  // silent takedown: a calm, unaware target within arm's reach and the player behind its back
+  takedownTarget(P, yaw) {
+    let best = null, bd = 1e9;
+    for (const n of this.npcs) {
+      if (!n.active || n.type === 'drone' || n.stagger > 0 || !(CALM.has(n.state) || n.state === 'search') || n.meter > 0.5) continue;
+      const dx = P.x - n.x, dz = P.z - n.z, d = Math.hypot(dx, dz);
+      if (d > (n.type === 'robot' ? 2.3 : 2.0)) continue;
+      if ((Math.sin(n.yaw) * dx + Math.cos(n.yaw) * dz) / (d || 1) > -0.3) continue;                   // must be behind it
+      if (Math.abs(angDiff(Math.atan2(-dx, -dz), yaw)) > 1.0) continue;                              // and the player must face it
+      if (d < bd) { bd = d; best = n; }
+    }
+    return best;
+  }
+  // bullet: first NPC or wall along the ray
+  hitscan(ox, oy, oz, dx, dy, dz, maxD, t0 = 0) {
+    let wallT = maxD;
+    if (dy < -1e-4) wallT = Math.min(wallT, -oy / dy);
+    for (let t = Math.max(0.5, t0); t < wallT; t += 0.4) { if (this.blocked(ox + dx * t, oz + dz * t, 0.05, oy + dy * t)) { wallT = t; break; } }
+    let best = null, bt = wallT, head = false;
+    const h2 = dx * dx + dz * dz;
+    if (h2 > 1e-6) for (const n of this.npcs) {
+      if (!n.active || n.state === 'ko') continue;
+      const cx = n.x - ox, cz = n.z - oz, s = (cx * dx + cz * dz) / h2;
+      if (s < t0 || s > bt) continue;
+      const ex = cx - dx * s, ez = cz - dz * s, rad = n.type === 'drone' ? 0.7 : 0.55;
+      if (ex * ex + ez * ez > rad * rad) continue;
+      const y = oy + dy * s, base = n.type === 'drone' ? n.y - 0.4 : n.y;
+      if (y < base || y > base + (n.type === 'drone' ? 0.9 : 1.95)) continue;
+      best = n; bt = s; head = n.type !== 'drone' && y > base + 1.55;
+    }
+    return { n: best, t: bt, head, x: ox + dx * bt, y: oy + dy * bt, z: oz + dz * bt, wall: !best && bt < maxD - 0.01 };
+  }
+  noteVisit(P) { const n = this.nearestNode(P.x, P.z); if (n) this.visits.set(n, (this.visits.get(n) || 0) + 1); }
+  removeBody(b) { const i = this.bodies.indexOf(b); if (i >= 0) this.bodies.splice(i, 1); b.found = true; }
 
   reset() {
     this.alarm = 0;
-    for (const n of this.npcs) if (n.state !== 'ko') { n.meter = 0; if (n.state === 'chase' || n.state === 'attack' || n.state === 'search') n.state = n.post ? 'post' : 'patrol'; }
+    for (const n of this.npcs) if (n.state !== 'ko') {
+      n.meter = 0; n.knowsHide = null; n.checkSpot = null;
+      if (AGGRO.has(n.state) || n.state === 'search' || n.state === 'choked') { n.state = n.post ? 'post' : 'patrol'; n.holder.rotation.x = 0; n.cur = null; n.target = null; }
+    }
   }
 
   update(dt, P) {
     this.time += dt; this.chasers = 0;
-    for (const n of this.npcs) { n.update(dt, P); if (n.state === 'chase' || n.state === 'attack') this.chasers++; }
+    for (const n of this.npcs) { n.update(dt, P); if (AGGRO.has(n.state)) this.chasers++; }
     for (let k = this.projectiles.length - 1; k >= 0; k--) {
       const p = this.projectiles[k]; p.life -= dt;
       p.m.position.x += p.vx * dt; p.m.position.y += p.vy * dt; p.m.position.z += p.vz * dt;
       let kill = p.life <= 0 || p.m.position.y < 0.05 || this.blocked(p.m.position.x, p.m.position.z, 0.1, p.m.position.y + 0.05);
-      if (!kill && P.alive && !P.dashing && Math.hypot(p.m.position.x - P.x, p.m.position.z - P.z) < 0.7 && Math.abs(p.m.position.y - (P.y + 1.0)) < 1.1) { this.cb.hitPlayer(7, p.m.position.x - p.vx, p.m.position.z - p.vz); kill = true; }
+      if (!kill && P.alive && !P.hidden && !P.dashing && Math.hypot(p.m.position.x - P.x, p.m.position.z - P.z) < 0.7 && Math.abs(p.m.position.y - (P.y + 1.0)) < 1.1) { this.cb.hitPlayer(11, p.m.position.x - p.vx, p.m.position.z - p.vz); kill = true; }
       if (kill) { this.fx.emit(p.m.position.x, p.m.position.y, p.m.position.z, 6, 0xff7a3a, 3, 0.3); this.root.remove(p.m); this.projectiles.splice(k, 1); }
     }
     if (this.chasers > 0) this.alarm = Math.min(100, this.alarm + dt * 9 * Math.min(3, this.chasers)); else this.alarm = Math.max(0, this.alarm - dt * 6);
   }
 }
 
-class NPC {
+export class NPC {
   constructor(mgr, type, x, z, opts) {
     this.mgr = mgr; this.type = type; this.cfg = TYPES[type]; this.opts = opts; this.censor = !!opts.censor;
     this.name = opts.name || this.cfg.prefix + (type === 'robot' || type === 'drone' ? '-' : '') + pad(Math.floor(rnd() * Math.pow(10, this.cfg.digits)), this.cfg.digits);
@@ -278,6 +366,8 @@ class NPC {
     this.lastSeen = new THREE.Vector2(x, z); this.lostT = 0; this.searchT = 0; this.fleeT = 0; this.atkCd = 0; this.windT = 0; this.shotCd = rr(0, 2);
     this.rate = 0; this.sees = false; this.percT = rnd() * 0.2; this.stagger = 0; this.flash = 0; this.kx = 0; this.kz = 0;
     this._sph = new THREE.Sphere(); this._v = new THREE.Vector3(); this.koT = 0; this.vy = 0; this.anim = ''; this.active = true; this.stuckT = 0; this.sidestepT = 0; this.sideDir = 1; this.reported = false; this.postBase = this.yaw;
+    this.postX = x; this.postZ = z; this.knowsHide = null; this.checkSpot = null; this.checked = new Set(); this.lookT = 0; this.inspT = 0; this.turnT = 0; this.turnDir = 1;
+    this.bodyT = rnd() * 0.4; this.found = false; this.unconscious = false; this.path = null; this.pi = 0; this.pathT = 0;
     this.holder = mgr.buildVisual(this);
     this.setAnim('idle');
   }
@@ -292,16 +382,19 @@ class NPC {
   }
   hostile() { return HOSTILE.has(this.type); }
 
+  // How fast this NPC notices the player (meter units per second); sets this.sees when it has a clear view.
   perceive(P) {
-    const cfg = this.cfg; this.sees = false;
-    if (!cfg.range || !P.alive || P.cutscene) return 0;
+    const cfg = this.cfg, dir = this.mgr.dir; this.sees = false;
+    if (!cfg.range || !P.alive || P.cutscene || P.hidden) return 0;
     const dx = P.x - this.x, dz = P.z - this.z, d = Math.hypot(dx, dz); let rate = 0;
-    if (P.noise > 0 && d < P.noise) rate = 0.55 * (1 - d / P.noise);
-    const range = cfg.range * (P.sneaking ? 0.45 : P.sprinting ? 1.2 : 1);
+    const ears = 1 + 0.3 * (dir ? dir.ears : 0);
+    if (P.noise > 0 && d < P.noise * ears) rate = 0.55 * (1 - d / (P.noise * ears));
+    const sneakMul = P.sneaking ? 0.45 + 0.3 * (dir ? dir.sneakWise : 0) : P.sprinting ? 1.2 : 1;
+    const range = cfg.range * sneakMul * (P.moving || P.sprinting ? 1 : 0.75) * (0.55 + 0.45 * (P.lit ?? 1));
     if (d < range) {
-      const dot = (dx * Math.sin(this.yaw) + dz * Math.cos(this.yaw)) / (d || 1);
-      if ((d < 3 || dot > Math.cos(cfg.fov * Math.PI / 360)) && this.mgr.los(this.x, this.z, P.x, P.z, this.type === 'drone' ? 2.6 : 1.9)) {
-        this.sees = true; rate = Math.max(rate, 1.25 * (1 - 0.65 * d / range) + (d < 3 ? 1.5 : 0));
+      const dot = (dx * Math.sin(this.yaw) + dz * Math.cos(this.yaw)) / (d || 1), near = d < (P.sneaking ? 1.1 : 2.4);
+      if ((near || dot > Math.cos(cfg.fov * Math.PI / 360)) && this.mgr.los(this.x, this.z, P.x, P.z, this.type === 'drone' ? 2.6 : 1.9)) {
+        this.sees = true; rate = Math.max(rate, 2.0 * (1 - 0.6 * d / range) + (near ? 1.5 : 0));
       }
     }
     return rate;
@@ -333,39 +426,93 @@ class NPC {
     return list.length ? pick(list) : null;
   }
   patrolMove(dt, speed, animWalk) {
+    const vig = this.mgr.dir ? this.mgr.dir.vigilance : 0;
+    if (this.turnT > 0) { this.turnT -= dt; this.yaw += dt * 2.7 * this.turnDir; this.setAnim('idle'); return; }   // glance over the shoulder
     if (this.post || !this.cur && !this.mgr.nearestNode(this.x, this.z)) { // stand guard and scan
-      this.yaw = this.postBase + Math.sin(this.mgr.time * 0.45 + this.postBase * 7) * (this.scanAmp || 1.1); this.setAnim('idle'); return;
+      if (this.post && Math.hypot(this.postX - this.x, this.postZ - this.z) > 1.0) { this.mgr.navTo(this, this.postX, this.postZ, speed * 1.2, dt); this.setAnim(animWalk, 1); return; }
+      this.yaw = this.postBase + Math.sin(this.mgr.time * 0.45 + this.postBase * 7) * Math.min(2.6, (this.scanAmp || 1.1) * (1 + 0.8 * vig)); this.setAnim('idle');
+      if (vig > 0.4 && this.type !== 'drone' && rnd() < dt * 0.05 * vig) { this.turnT = rr(1.0, 1.6); this.turnDir = rnd() < 0.5 ? -1 : 1; }
+      return;
     }
     if (this.waitT > 0) { this.waitT -= dt; this.setAnim('idle'); return; }
     if (!this.target) { this.target = this.chooseNode(); if (!this.target) { this.waitT = 2; return; } }
     const d = this.moveToward(this.target.x, this.target.z, speed, dt, this.type === 'drone');
     this.setAnim(animWalk, speed < 2 ? 0.9 : 1);
-    if (d < 0.9) { this.prev = this.cur; this.cur = this.target; this.target = null; if (rnd() < this.cfg.pause) this.waitT = rr(1, 4); }
+    if (d < 0.9) {
+      this.prev = this.cur; this.cur = this.target; this.target = null; if (rnd() < this.cfg.pause) this.waitT = rr(1, 4);
+      if (this.type !== 'drone' && rnd() < 0.12 + 0.45 * vig) { this.turnT = rr(1.1, 2.0); this.turnDir = rnd() < 0.5 ? -1 : 1; }   // alert guards check behind them
+    }
+  }
+
+  // ----- reactions -----
+  hear(x, z, dur = 10, meter = 0.55) {   // heard something: go and look
+    if (!this.hostile() || this.state === 'ko' || this.state === 'choked' || AGGRO.has(this.state)) return;
+    this.lastSeen.set(x, z); this.meter = Math.max(this.meter, meter);
+    if (this.state !== 'search') { this.state = 'search'; this.searchT = dur; this.checked.clear(); this.checkSpot = null; this.lookT = 0; }
+    else this.searchT = Math.max(this.searchT, dur * 0.7);
+  }
+  pickSpot() {   // after the player used a hiding place once, guards start checking them
+    const m = this.mgr; if (!m.dir || m.dir.hideWise < 0.1) return null;
+    let best = null, bd = 16;
+    for (const s of m.hideSpots) { if (this.checked.has(s.id)) continue; const d = Math.hypot(s.x - this.lastSeen.x, s.z - this.lastSeen.y); if (d < bd) { bd = d; best = s; } }
+    return best;
+  }
+  resolveHide(spot, P, sure) {   // opens a hiding place: is the player inside?
+    const m = this.mgr; this.checked.add(spot.id);
+    if (P.hidden && P.hideId === spot.id && (sure || this.knowsHide === spot || rnd() < 0.25 + 0.55 * (m.dir ? m.dir.hideWise : 0) + 0.15 * Math.min(2, m.dir ? m.dir.spotCount(spot.id) : 0))) { m.cb.foundHidden?.(spot, this); return true; }
+    return false;
+  }
+  discoverBody(b) {
+    const m = this.mgr; m.removeBody(b);
+    this.state = 'search'; this.lastSeen.set(b.x, b.z); this.searchT = 15; this.meter = Math.max(this.meter, 0.7); this.checked.clear(); this.checkSpot = null; this.lookT = 0;
+    m.alertNearby(this.x, this.z, 24, { x: b.x, z: b.z }); m.dir?.onBodyFound(); m.cb.onBodyFound?.(b); sfx.alert(m.vol(this.x, this.z, m.lastP || { x: this.x, z: this.z }));
+  }
+  seesBody() {
+    const m = this.mgr; if (!m.bodies.length) return null;
+    const half = Math.cos((this.cfg.fov || 110) * Math.PI / 360);
+    for (const b of m.bodies) {
+      if (b.found) continue;
+      const dx = b.x - this.x, dz = b.z - this.z, d = Math.hypot(dx, dz);
+      if (d < 13 && (d < 2.5 || (dx * Math.sin(this.yaw) + dz * Math.cos(this.yaw)) / (d || 1) > half) && m.los(this.x, this.z, b.x, b.z, 0.9)) return b;
+    }
+    return null;
   }
 
   // ----- combat -----
-  takeHit(dmg, dx, dz, back, P) {
+  takeHit(dmg, dx, dz, src, P, crit) {
     if (this.state === 'ko') return;
-    this.hp -= dmg; this.flash = 0.18; this.stagger = this.type === 'robot' ? 0.15 : 0.35; this.kx = dx * (this.type === 'robot' ? 2 : 5); this.kz = dz * (this.type === 'robot' ? 2 : 5);
+    const ar = this.cfg.armor && this.cfg.armor[src]; if (ar) dmg *= ar;
+    const gun = src === 'gun';
+    this.hp -= dmg; this.flash = 0.18; this.stagger = src === 'fist' ? 0 : gun ? 0.12 : this.type === 'robot' ? 0.15 : 0.35;   // fists never stun-lock
+    const kb = gun ? 1.5 : src === 'fist' ? 1.2 : this.type === 'robot' ? 2 : 5; this.kx = dx * kb; this.kz = dz * kb;
     const m = this.mgr, fx = m.fx, y = this.y + (this.type === 'drone' ? 0 : 1.2);
     if (this.type === 'robot' || this.type === 'drone') { fx.emit(this.x, y, this.z, 20, 0xffa040, 5, 0.5); sfx.metal(m.vol(this.x, this.z, P)); }
     else fx.emit(this.x, y, this.z, 12, 0xfff0c0, 3.5, 0.35, 5);
     sfx.hit(m.vol(this.x, this.z, P));
-    m.cb.onHit?.(this, back);
+    m.cb.onHit?.(this, !!crit);
     if (this.hp <= 0) { this.die(P); return; }
     if (this.type === 'citizen' || this.type === 'prisoner') this.flee(P.x, P.z);
-    else if (this.state !== 'chase' && this.state !== 'attack') this.startChase(P);
+    else if (!AGGRO.has(this.state)) this.startChase(P);
   }
   flee(x, z) { this.state = 'flee'; this.fleeT = 6; this.fleeFrom = { x, z }; if (!this.reported && this.hostile() === false) { this.reported = true; this.mgr.alertNearby(this.x, this.z, 30, { x: this.x, z: this.z }); } }
   startChase(P) {
-    if (this.state === 'chase' || this.state === 'attack') return;
-    this.state = 'chase'; this.meter = 1; this.lostT = 0; this.lastSeen.set(P.x, P.z);
+    if (AGGRO.has(this.state) || this.state === 'ko' || this.state === 'choked') return;
+    this.state = 'chase'; this.meter = 1; this.lostT = 0; this.lastSeen.set(P.x, P.z); this.checkSpot = null; this.path = null;
     this.mgr.alertNearby(this.x, this.z, 28, P); this.mgr.cb.onSpotted?.(this);
     sfx.alert(this.mgr.vol(this.x, this.z, P));
   }
-  die(P) {
+  beginChoke() { this.state = 'choked'; this.path = null; this.checkSpot = null; this.meter = 0; this.sees = false; }
+  endChoke(P, knockedOut) {
+    if (this.state !== 'choked') return;
+    if (knockedOut) { this.die(P, true); return; }
+    this.holder.rotation.x = 0; this.holder.rotation.z = 0; this.state = 'patrol'; this.startChase(P);   // struggles free
+  }
+  die(P, quiet = false) {
     this.state = 'ko'; this.koT = 0; this.hp = 0; this.icon.visible = false; this.nameSprite.visible = false; this.hpBar.visible = false;
-    sfx.ko(this.mgr.vol(this.x, this.z, P)); this.mgr.cb.onKill?.(this);
+    this.unconscious = quiet; this.found = false; this.path = null;
+    if (!quiet) sfx.ko(this.mgr.vol(this.x, this.z, P)); else sfx.thud?.(0.6);
+    if (this.type !== 'drone') this.mgr.bodies.push(this);
+    this.mgr.cb.onKill?.(this, quiet);
     if (this.type === 'drone') { this.vy = 0; this.fx0 = true; }
   }
   updateKO(dt) {
@@ -376,22 +523,27 @@ class NPC {
       if (this.koT > 2.5) this.holder.visible = false;
     } else {
       this.holder.rotation.x += (-Math.PI / 2 - this.holder.rotation.x) * Math.min(1, dt * 6);
+      this.holder.rotation.z *= Math.max(0, 1 - dt * 8);
       this.holder.position.y = Math.max(0.12, this.holder.position.y - dt * 0.5);
-      if (this.type === 'robot' && this.koT < 2 && rnd() < dt * 8) this.mgr.fx.emit(this.x + rr(-0.3, 0.3), 0.4, this.z + rr(-0.3, 0.3), 3, 0xffa040, 2.5, 0.4);
+      if (this.type === 'robot' && this.koT < 2 && rnd() < dt * 8 && !this.unconscious) this.mgr.fx.emit(this.x + rr(-0.3, 0.3), 0.4, this.z + rr(-0.3, 0.3), 3, 0xffa040, 2.5, 0.4);
       this.mixer?.update(dt * 0.0);
-      if (this.koT > 25) this.holder.visible = false;
+      if (this.koT > 120) { this.holder.visible = false; if (!this.found) this.mgr.removeBody(this); }
     }
     this.holder.position.x = this.x; this.holder.position.z = this.z; if (this.type === 'drone') this.holder.position.y = this.y;
   }
 
   // ----- main update -----
   update(dt, P) {
-    const m = this.mgr, dPlayer = Math.hypot(this.x - P.x, this.z - P.z);
+    const m = this.mgr, dPlayer = Math.hypot(this.x - P.x, this.z - P.z); m.lastP = P;
     this.active = this.state === 'ko' ? this.holder.visible : dPlayer < 52;
     if (this.state === 'ko') { if (this.holder.visible) this.updateKO(dt); return; }
     this.holder.visible = this.active && (!m.frustum || m.frustum.intersectsSphere(this._sph.set(this._v.set(this.x, this.y + 1, this.z), 2.4))); if (!this.active) return;
 
-    this.atkCd -= dt;
+    this.atkCd -= dt; this.shotCd -= dt;
+    if (this.state === 'choked') {   // held by the player: struggles, leans back
+      this.holder.rotation.x += (-0.42 - this.holder.rotation.x) * Math.min(1, dt * 5); this.holder.rotation.z = Math.sin(m.time * 36) * 0.07;
+      this.setAnim('idle'); this.sync(dt, dPlayer, P); return;
+    }
     // staggered: knockback, no actions
     if (this.stagger > 0) {
       this.stagger -= dt; const p = { x: this.x + this.kx * dt, z: this.z + this.kz * dt }; if (this.type !== 'drone') m.resolve(p, 0.4); this.x = p.x; this.z = p.z; this.kx *= 0.88; this.kz *= 0.88;
@@ -405,44 +557,72 @@ class NPC {
       if (this.state === 'flee') {
         this.fleeT -= dt; const ax = this.x - this.fleeFrom.x, az = this.z - this.fleeFrom.z, l = Math.hypot(ax, az) || 1;
         this.moveToward(this.x + ax / l * 5, this.z + az / l * 5, cfg.run, dt); this.setAnim('run');
-        if (this.fleeT <= 0) { this.state = 'patrol'; this.reported = false; }
+        if (this.fleeT <= 0) { this.state = 'patrol'; this.reported = false; this.cur = null; this.target = null; }
       } else {
-        if (P.attackedAt > m.time - 1.2 && dPlayer < 16 && P.alive && m.los(this.x, this.z, P.x, P.z)) this.flee(P.x, P.z);
+        this.bodyT -= dt;
+        let b = null; if (this.bodyT <= 0) { this.bodyT = 0.5; b = this.seesBody(); }
+        if (b) { m.removeBody(b); this.flee(b.x, b.z); }   // a citizen finds a body: runs and reports
+        else if (P.attackedAt > m.time - 1.2 && dPlayer < 16 && P.alive && !P.hidden && m.los(this.x, this.z, P.x, P.z)) this.flee(P.x, P.z);
         else this.patrolMove(dt, cfg.walk, 'walk');
       }
       this.sync(dt, dPlayer, P); return;
     }
 
     // hostile AI
-    if (this.state === 'patrol' || this.state === 'post' || this.state === 'idle') {
+    const st = this.state;
+    if (st === 'patrol' || st === 'post' || st === 'idle') {
       if (this.rate > 0) this.meter = Math.min(1.1, this.meter + this.rate * dt); else this.meter = Math.max(0, this.meter - 0.3 * dt);
+      this.bodyT -= dt; let b = null; if (this.bodyT <= 0) { this.bodyT = 0.4; b = this.seesBody(); }
       if (this.meter >= 1) this.startChase(P);
-      else if (this.meter > 0.35 && this.rate > 0) { this.face(P.x, P.z, dt); this.setAnim('idle'); this.lastSeen.set(P.x, P.z); }
-      else this.patrolMove(dt, this.type === 'drone' ? cfg.walk : cfg.walk, 'walk');
-    } else if (this.state === 'search') {
+      else if (b) this.discoverBody(b);
+      else if (this.meter > 0.35 && this.rate > 0) { this.face(P.x, P.z, dt); this.setAnim('idle'); this.lastSeen.set(P.x, P.z); this.turnT = 0; }
+      else this.patrolMove(dt, cfg.walk, 'walk');
+    } else if (st === 'search') {
       this.searchT -= dt;
-      if (this.rate > 0) { this.meter = Math.min(1.1, this.meter + this.rate * dt); if (this.meter >= 1) this.startChase(P); }
-      const d = Math.hypot(this.lastSeen.x - this.x, this.lastSeen.y - this.z);
-      if (d > 1.4) { this.moveToward(this.lastSeen.x, this.lastSeen.y, cfg.walk * 1.5, dt, this.type === 'drone'); this.setAnim('walk', 1.2); }
-      else { this.yaw += dt * 1.6; this.setAnim('idle'); }
-      if (this.searchT <= 0) { this.state = this.post ? 'post' : 'patrol'; this.meter = 0.25; this.target = null; }
-    } else if (this.state === 'chase') {
-      if (this.sees || this.rate > 0.3) { this.lastSeen.set(P.x, P.z); this.lostT = 0; } else this.lostT += dt;
+      if (this.rate > 0) { this.meter = Math.min(1.1, this.meter + this.rate * dt); if (this.meter >= 1) this.startChase(P); if (this.sees) this.lastSeen.set(P.x, P.z); }
+      this.bodyT -= dt; if (this.bodyT <= 0) { this.bodyT = 0.5; const b = this.seesBody(); if (b) this.discoverBody(b); }
+      if (this.state === 'search') {
+        if (this.checkSpot) {
+          const s = this.checkSpot, d = Math.hypot(s.x - this.x, s.z - this.z);
+          if (d > 1.9) { m.navTo(this, s.x, s.z, cfg.walk * 1.6, dt); this.setAnim('walk', 1.3); }
+          else { this.face(s.x, s.z, dt); this.setAnim('idle'); this.inspT -= dt; if (this.inspT <= 0) { this.resolveHide(s, P, false); this.checkSpot = null; this.lookT = 0; } }
+        } else {
+          const d = Math.hypot(this.lastSeen.x - this.x, this.lastSeen.y - this.z), fast = 1.5 + 0.4 * (m.dir ? m.dir.gunWise : 0);
+          if (d > 1.4) { m.navTo(this, this.lastSeen.x, this.lastSeen.y, cfg.walk * fast, dt, this.type === 'drone'); this.setAnim('walk', 1.2); }
+          else {
+            this.yaw += dt * 1.6; this.setAnim('idle'); this.lookT += dt;
+            if (this.lookT > 2.2 && this.type !== 'drone') { this.lookT = 0; if (this.checked.size < 3) { const s = this.pickSpot(); if (s) { this.checkSpot = s; this.inspT = 1.3; } } }
+          }
+        }
+        if (this.searchT <= 0) { this.state = this.post ? 'post' : 'patrol'; this.meter = 0.25; this.target = null; this.cur = null; this.checked.clear(); this.checkSpot = null; }
+      }
+    } else if (st === 'chase') {
+      const kh = this.knowsHide && P.hidden && P.hideId === this.knowsHide.id ? this.knowsHide : null; if (!kh) this.knowsHide = null;
+      if (this.sees || this.rate > 0.3 || kh) { if (kh) this.lastSeen.set(kh.x, kh.z); else this.lastSeen.set(P.x, P.z); this.lostT = 0; } else this.lostT += dt;
       if (!P.alive) { this.state = 'search'; this.searchT = 4; }
-      else if (this.lostT > 3.5) { this.state = 'search'; this.searchT = 7; this.meter = 0.6; }
+      else if (this.lostT > 4) { this.state = 'search'; this.searchT = 12; this.meter = 0.6; this.checked.clear(); this.checkSpot = null; this.lookT = 0; }   // loses the trail
       else if (this.type === 'drone') this.droneChase(dt, P);
       else {
-        const d = Math.hypot(this.lastSeen.x - this.x, this.lastSeen.y - this.z);
-        if (this.sees && d < cfg.atk.range && this.atkCd <= 0) { this.state = 'attack'; this.windT = cfg.atk.wind; this.setAnim('idle'); }
-        else if (d > 1.2) { this.moveToward(this.lastSeen.x, this.lastSeen.y, cfg.run, dt); this.setAnim('run', cfg.run < 4 ? 0.9 : 1); }
+        const d = Math.hypot(this.lastSeen.x - this.x, this.lastSeen.y - this.z), g = cfg.gun;
+        if (kh && d < 1.8) { this.face(kh.x, kh.z, dt, 10); this.setAnim('idle'); this.inspT += dt; if (this.inspT > 0.5) { this.inspT = 0; this.resolveHide(kh, P, true); } }
+        else if (this.sees && dPlayer < cfg.atk.range && this.atkCd <= 0) { this.state = 'attack'; this.windT = cfg.atk.wind; this.setAnim('idle'); }
+        else if (g && this.sees && dPlayer > cfg.atk.range + 1.5 && dPlayer < g.range && this.shotCd <= 0) { this.state = 'shoot'; this.windT = g.wind; this.setAnim('idle'); }
+        else if (g && this.sees && dPlayer < 9 && dPlayer > 4) { this.face(P.x, P.z, dt, 8); this.setAnim('idle'); }   // holds ground and fights from range
+        else if (d > 1.2) { m.navTo(this, this.lastSeen.x, this.lastSeen.y, cfg.run, dt); this.setAnim('run', cfg.run < 4 ? 0.9 : 1); }
         else { this.face(P.x, P.z, dt); this.setAnim('idle'); }
       }
-    } else if (this.state === 'attack') {
+    } else if (st === 'shoot') {
+      this.windT -= dt; this.face(P.x, P.z, dt, 12); this.flash = Math.max(this.flash, 0.04 + 0.08 * Math.sin(this.windT * 30) ** 2);
+      if (this.windT <= 0) {
+        this.state = 'chase'; this.shotCd = cfg.gun.cd + rr(0, 0.7);
+        if (P.alive && !P.hidden) m.fire({ x: this.x + Math.sin(this.yaw) * 0.6, y: 1.35, z: this.z + Math.cos(this.yaw) * 0.6 }, P, Math.hypot(P.x - this.x, P.z - this.z) * 0.16);
+      }
+    } else if (st === 'attack') {
       this.windT -= dt; this.face(P.x, P.z, dt, 10); this.flash = Math.max(this.flash, 0.05 + 0.1 * Math.sin(this.windT * 30) ** 2);
       if (this.windT <= 0) {
         this.atkCd = cfg.atk.cd; this.state = 'chase';
         const d = Math.hypot(P.x - this.x, P.z - this.z);
-        if (d < cfg.atk.range + 0.7 && P.alive && !P.dashing && Math.abs(P.y - this.y) < 1.2) m.cb.hitPlayer(cfg.atk.dmg, this.x, this.z);
+        if (d < cfg.atk.range + 0.7 && P.alive && !P.hidden && !P.dashing && Math.abs(P.y - this.y) < 1.2) m.cb.hitPlayer(cfg.atk.dmg, this.x, this.z);
         sfx.swing(); this.x += Math.sin(this.yaw) * 0.4; this.z += Math.cos(this.yaw) * 0.4;
       }
     }
@@ -469,16 +649,16 @@ class NPC {
     for (const mt of this.mats) { if (mt.emissive) { mt.emissive.copy(mt.userData.baseEm || mt.emissive); if (f > 0) mt.emissive.addScalar(Math.min(1, f) * 0.8); } }
     // icon + name + hp
     const I = icons(), st = this.state;
-    const show = this.hostile() ? (dPlayer < 26) : (st === 'flee' && dPlayer < 20);
+    const show = st === 'choked' ? false : this.hostile() ? (dPlayer < 26) : (st === 'flee' && dPlayer < 20);
     let map = null, scale = [0.9, 0.45];
     if (this.hostile()) {
-      if (st === 'chase' || st === 'attack') { map = I.alert; scale = [0.55, 0.55]; }
+      if (AGGRO.has(st)) { map = I.alert; scale = [0.55, 0.55]; }
       else if (st === 'search') { map = I.search; scale = [0.55, 0.55]; }
       else map = this.meter > 0.6 ? I.open : this.meter > 0.12 ? I.half : I.closed;
     }
     this.iconMat.opacity += ((show && map ? 1 : 0) - this.iconMat.opacity) * Math.min(1, dt * 8);
     if (map) { if (this.iconMat.map !== map) { this.iconMat.map = map; this.iconMat.needsUpdate = true; } this.icon.scale.set(scale[0], scale[1], 1); this.icon.position.y = this.headY + (scale[0] < 0.6 ? 0.08 : 0); }
-    this.nameMat.opacity += ((dPlayer < 13 && P.alive ? 0.9 : 0) - this.nameMat.opacity) * Math.min(1, dt * 6);
+    this.nameMat.opacity += ((dPlayer < 13 && P.alive && st !== 'choked' ? 0.9 : 0) - this.nameMat.opacity) * Math.min(1, dt * 6);
     const hurt = this.hp < this.maxHp;
     this.hpMat.opacity += ((hurt && dPlayer < 16 ? 0.9 : 0) - this.hpMat.opacity) * Math.min(1, dt * 6);
     this.hpBar.scale.x = 0.9 * Math.max(0.02, this.hp / this.maxHp);

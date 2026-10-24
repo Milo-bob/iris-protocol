@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { pbr } from './assets.js';
 import { TOWER_H, TOWER_R, EDGE, rnd, rr, pick } from './city.js';
+import { createMass } from './mass.js';
 
 const radiusAt = (y) => TOWER_R + (0.6 - TOWER_R) * (y / TOWER_H);
 
@@ -107,23 +108,11 @@ export function buildTower(scene) {
     tower.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 240, 1.1, 12, false), tentMat));
   }
 
-  // the big eye
-  const eye = new THREE.Group();
+  // the Dictator: a mass of black matter hanging over the tower, many eyes, tentacles reaching down
   const eyeBase = new THREE.Vector3(0, TOWER_H + 24, 0);
-  eye.position.copy(eyeBase); scene.add(eye);
-  const R = 11;
-  const sclera = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 40), new THREE.MeshStandardMaterial({ map: scleraTexture(), emissive: 0x8a2412, emissiveIntensity: 0.7, roughness: 0.35 }));
-  const irisGeo = new THREE.SphereGeometry(R * 1.01, 48, 16, 0, Math.PI * 2, 0, 0.62); irisGeo.rotateX(Math.PI / 2);
-  const pupilGeo = new THREE.SphereGeometry(R * 1.02, 32, 12, 0, Math.PI * 2, 0, 0.3); pupilGeo.rotateX(Math.PI / 2);
-  const iris = new THREE.Mesh(irisGeo, new THREE.MeshBasicMaterial({ color: 0xff3a10 }));
-  const pupil = new THREE.Mesh(pupilGeo, new THREE.MeshBasicMaterial({ color: 0x0a0101 })); pupil.scale.x = 0.32;
-  eye.add(sclera, iris, pupil);
-  const c = document.createElement('canvas'); c.width = c.height = 128;
-  const g = c.getContext('2d'), rg = g.createRadialGradient(64, 64, 4, 64, 64, 64);
-  rg.addColorStop(0, 'rgba(255,90,30,0.9)'); rg.addColorStop(0.35, 'rgba(255,60,20,0.3)'); rg.addColorStop(1, 'rgba(255,40,10,0)');
-  g.fillStyle = rg; g.fillRect(0, 0, 128, 128);
-  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
-  glow.scale.set(110, 110, 1); eye.add(glow);
+  const mass = createMass({ R: 11, tentacles: 12, tentLen: 60, segs: 18, tentEvery: 2, eyes: 28, eyeSize: 1.4, bigEye: 0.55, glowSize: 110, wobble: 0.05 });
+  const eye = mass.group; eye.position.copy(eyeBase); scene.add(eye);
+  const gazeTgt = new THREE.Vector3();
 
   const gaze = { target: new THREE.Vector3(0, 0, 80), current: new THREE.Vector3(0, 0, 80), timer: 0, speed: 10 };
   let override = null;
@@ -137,7 +126,7 @@ export function buildTower(scene) {
     }
     gaze.current.lerp(gaze.target, 1 - Math.exp(-dt * gaze.speed));
     eye.position.copy(eyeBase); eye.position.y += Math.sin(performance.now() / 900) * 0.8;
-    eye.lookAt(gaze.current);
+    mass.lookAt(gaze.current); mass.update(dt, gazeTgt.set(playerPos.x, 1.5, playerPos.z));
   }
   return { tower, eye, update, setOverride: (v) => { override = v; } };
 }
