@@ -83,8 +83,8 @@ export function buildFloor(index, P) {
   const carveRect = (x, y, w, h) => { for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) if (i >= 0 && i < GW && j >= 0 && j < GH) grid[j * GW + i] = 1; };
 
   function bsp(x, y, w, h, depth) {
-    if (depth === 0 || (w < 13 && h < 13)) {
-      const rw = ri(5, Math.min(w - 3, 11)), rh = ri(5, Math.min(h - 3, 11)), rx = x + ri(1, w - rw - 1), ry = y + ri(1, h - rh - 1);
+    if (depth === 0 || (w < 13 && h < 13)) {   // rooms stay small (max 9 cells): less open space to get lost in
+      const rw = ri(5, Math.min(w - 3, 9)), rh = ri(5, Math.min(h - 3, 9)), rx = x + ri(1, w - rw - 1), ry = y + ri(1, h - rh - 1);
       const room = { id: rooms.length, x: rx, y: ry, w: rw, h: rh, cx: rx + rw / 2, cy: ry + rh / 2 }; carveRect(rx, ry, rw, rh); rooms.push(room); return room;
     }
     const vertical = w > h ? true : h > w ? false : rnd() < 0.5;

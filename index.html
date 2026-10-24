@@ -14,7 +14,7 @@
   #help { left: 12px; bottom: 10px; opacity: .8; }
   #pause { inset: 0; display: none; align-items: center; justify-content: center; background: rgba(20, 3, 4, .6); font-size: clamp(20px, 4vw, 44px); letter-spacing: 8px; color: #ff4a2a; }
   #pause.on { display: flex; }
-  #zone { left: 50%; top: 9%; transform: translateX(-50%); text-align: center; opacity: 0; transition: opacity 1.2s; }
+  #zone { left: 50%; top: 21%; transform: translateX(-50%); text-align: center; opacity: 0; transition: opacity 1.2s; }
   #zone.on { opacity: 1; transition: opacity .4s; }
   #zoneName { font-size: clamp(16px, 2.6vw, 30px); letter-spacing: 6px; color: #ff4a2a; }
   #zoneSub { margin-top: 4px; letter-spacing: 3px; color: #ffc233; }
@@ -29,7 +29,13 @@
   #hpfill { background: linear-gradient(90deg, #b3200f, #ff5a2a); }
   #alarmwrap { right: 12px; top: 10px; width: 20%; text-align: right; }
   #alarmfill { background: linear-gradient(90deg, #ffc233, #ff2a1a); width: 0; }
-  #objective { right: 12px; bottom: 10px; text-align: right; max-width: 38%; color: #ffd36b; }
+  #objective { left: 50%; top: 10px; transform: translateX(-50%); width: 40%; text-align: center; color: #ffd36b; background: rgba(10, 2, 4, .55); border: 1px solid #7a4a1a; border-left: 3px solid #4ff0ff; padding: 6px 12px 7px; }
+  #objective.flash { animation: objflash 1.6s; }
+  @keyframes objflash { 0%, 40% { background: rgba(79, 240, 255, .35); transform: translateX(-50%) scale(1.06); } 100% { background: rgba(10, 2, 4, .55); transform: translateX(-50%) scale(1); } }
+  #objtag { font-size: .8em; letter-spacing: 4px; color: #4ff0ff; }
+  #objmain { font-size: 1.25em; letter-spacing: 2px; color: #fff0c0; margin: 2px 0; }
+  #objsub { font-size: .9em; opacity: .9; line-height: 1.35; }
+  #objdist { margin-left: 8px; color: #4ff0ff; }
   #cross { left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; background: #ffd36b; border-radius: 50%; opacity: .75; }
   #cross::after { content: ''; position: absolute; left: -9px; top: -9px; width: 20px; height: 20px; border: 1px solid rgba(255, 211, 107, .45); border-radius: 50%; }
   #ammowrap { left: 12px; bottom: 74px; letter-spacing: 2px; }
@@ -84,11 +90,11 @@
   <div id="viswrap" class="hud hudgame"><div id="vistxt">VISIBILITY</div><div class="meter"><div id="visfill"></div></div></div>
   <div id="ammowrap" class="hud hudgame"><div>PISTOL</div><div id="ammo">12 / 24</div></div>
   <div id="toast" class="hud hudgame"></div>
-  <div id="objective" class="hud hudgame">OBJECTIVE: Escape Detention Sector 7. Find your file.</div>
+  <div id="objective" class="hud hudgame"><div id="objtag">OBJECTIVE<span id="objdist"></span></div><div id="objmain">ESCAPE DETENTION SECTOR 7</div><div id="objsub"></div></div>
   <div id="cross" class="hud hudgame"></div>
-  <div id="lock" class="hud hudgame" style="left:50%;top:22%;transform:translateX(-50%);font-size:clamp(12px,1.8vw,20px);color:#ffd36b">Click to capture the mouse</div>
+  <div id="lock" class="hud hudgame" style="left:50%;top:38%;transform:translateX(-50%);font-size:clamp(12px,1.8vw,20px);color:#ffd36b">Click to capture the mouse</div>
   <div id="zone" class="hud hudgame"><div id="zoneName"></div><div id="zoneSub"></div></div>
-  <div id="pause" class="hud"><div style="text-align:center">PAUSED<div style="margin-top:18px;font-size:.32em;letter-spacing:4px;color:#ffc233">"I STILL SEE YOU, PRISONER ZERO. STOPPING TIME WILL NOT SAVE YOU."</div><div style="margin-top:22px;font-size:.24em;letter-spacing:3px;line-height:1.9;opacity:.8">WASD MOVE &middot; SHIFT SNEAK &middot; CTRL SPRINT &middot; SPACE JUMP &middot; W W DASH<br>LMB: CHOKE FROM BEHIND / PUNCH WHEN HUNTED / SHOOT AT RANGE &middot; R RELOAD<br>E: HIDE (DUMPSTERS, LOCKERS) &middot; INTERACT<br>P: CONTINUE &nbsp;&middot;&nbsp; BACKSPACE: RESTART</div></div></div>
+  <div id="pause" class="hud"><div style="text-align:center">PAUSED<div style="margin-top:18px;font-size:.32em;letter-spacing:4px;color:#ffc233">"I STILL SEE YOU, PRISONER ZERO. STOPPING TIME WILL NOT SAVE YOU."</div><div style="margin-top:22px;font-size:.24em;letter-spacing:3px;line-height:1.9;opacity:.8">WASD MOVE &middot; SHIFT SNEAK &middot; CTRL SPRINT &middot; SPACE JUMP &middot; W W DASH<br>LMB: CHOKE FROM BEHIND / PUNCH WHEN HUNTED / SHOOT AT RANGE &middot; R RELOAD<br>E: HIDE (DUMPSTERS, LOCKERS) &middot; INTERACT &middot; N: MAP<br>P: CONTINUE &nbsp;&middot;&nbsp; BACKSPACE: RESTART</div></div></div>
   <div id="hideov" class="hud"><span>E / MOVE: LEAVE HIDING PLACE</span></div>
   <div id="bars"><div class="bar top"></div><div class="bar bot"></div></div>
   <div id="caption" class="hud"></div>

@@ -1,7 +1,8 @@
 import './fog.js';
 import * as THREE from 'three';
 import { manager, loadGLB, loadProp } from './assets.js';
-import { buildCity, districtAt, ZONES, eyeTexture } from './city.js';
+import { buildCity, districtAt, ZONES, eyeTexture, EDGE } from './city.js';
+import { Guide } from './guide.js';
 import { buildTower } from './tower.js';
 import { FX } from './fx.js';
 import { NPCManager } from './npc.js';
@@ -50,6 +51,7 @@ function resize() {
   renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize); resize();
+const guide = new Guide(scene, camera, stage);   // objective markers, route line, minimap
 
 // ---------- night sky ----------
 let sky;
@@ -306,6 +308,7 @@ window.addEventListener('keydown', (e) => {
   if (k === 'p') setPaused(!paused);
   else if (k === 'g') { if (world === 'city') setShadows(!shadowsOn); else { shadowsOn = !shadowsOn; shEl.textContent = shadowsOn ? 'on' : 'off'; } }
   else if (k === 'm') toggleMusic();
+  else if (k === 'n') guide.toggleMap();
   else if (k === 'r' && !alive) respawn();
   else if (k === 'r' && alive && !paused) startReload();
   else if (k === ' ' && !paused) jumpQueued = true;
@@ -557,7 +560,7 @@ function updatePlayer(dt) {
   // what the NPCs can perceive
   Pst.x = player.position.x; Pst.y = player.position.y; Pst.z = player.position.z; Pst.alive = alive;
   Pst.sneaking = sneak && moving; Pst.sprinting = sprinting; Pst.dashing = roll.t > 0; Pst.moving = moving; Pst.hidden = false;
-  let noise = roll.t > 0 ? 11 : sprinting ? 13 : moving ? (sneak ? 3 : 7) : 0;
+  let noise = roll.t > 0 ? 12 : sprinting ? 15 : moving ? (sneak ? 3.5 : 9) : 0;
   if (chokeOn) noise = Math.max(noise, 3);
   if (atkT > 0 && atkKind === 'punch') noise = Math.max(noise, 9);
   if (gunNoiseT > 0) noise = Math.max(noise, 16);
@@ -611,7 +614,7 @@ function computeLit() {
     const dx = s.x - px, dz = s.z - pz, dy = (s.y ?? 3) - 1.2, d = Math.sqrt(dx * dx + dz * dz + dy * dy);
     if (d >= s.dist) continue; const f = 1 - d / s.dist; sum += f * f * s.intensity / 45;
   }
-  return Math.min(1, 0.12 + sum);
+  return Math.min(1, 0.3 + sum);   // the player's own light always shows a little
 }
 
 // ---------- zones, lights ----------
@@ -748,7 +751,7 @@ function completeRelay(r) {
 }
 
 // ---------- world switching: city <-> tower floors <-> boss arena ----------
-const promptEl = $('prompt'), holdWrap = $('holdwrap'), holdFill = $('holdfill'), fadeEl = $('fade'), bossBar = $('bossbar'), bossFill = $('bossfill'), bossName = $('bossname'), objEl = $('objective'), endEl = $('endcard');
+const promptEl = $('prompt'), holdWrap = $('holdwrap'), holdFill = $('holdfill'), fadeEl = $('fade'), bossBar = $('bossbar'), bossFill = $('bossfill'), bossName = $('bossname'), objEl = $('objective'), objMainEl = $('objmain'), objSubEl = $('objsub'), objDistEl = $('objdist'), endEl = $('endcard');
 function fade(on, ms = 450) { if (query.has('floor')) { fadeEl.style.opacity = 0; return Promise.resolve(); } fadeEl.style.transition = `opacity ${ms}ms`; fadeEl.style.opacity = on ? 1 : 0; return new Promise((r) => setTimeout(r, ms)); }
 function texturesIdle() {
   return new Promise((resolve) => {
@@ -762,18 +765,46 @@ function say(text, dur = 3.4, speak = true) {
   setTimeout(() => { if (ui.currentCaption === text) ui.caption(''); }, dur * 1000);
 }
 function elevLocked() { const d = FLOORS[floorIdx]; return !!d && ((d.lock === 'file' && !flags.file) || (d.lock === 'censor' && !flags.censor)); }
-function refreshObjective() {
-  let t;
-  if (world === 'city') t = relaysDone() < 3 ? `The tower is sealed. Sabotage the Iris relays (red beams): ${relaysDone()}/3. Stay out of sight.` : 'The seal is broken. Enter the tower and find your file.';
-  else if (floorIdx >= FLOORS.length) t = 'Destroy The Iris.';
-  else {
-    const d = FLOORS[floorIdx];
-    if (d.lock === 'file' && !flags.file) t = 'Find and destroy your file (hold E).';
-    else if (d.lock === 'censor' && !flags.censor) t = 'Defeat the Chief Censor to unlock the elevator.';
-    else if (!flags.file) t = 'Take the elevator up. Your file is in the Records Archive (floor 2).';
-    else t = 'Take the elevator up. Reach the Apex.';
+// the current objective: a headline, a hint, and the places to mark (the primary one also gets the route line)
+function objectiveNow() {
+  const T = [];
+  if (world === 'city') {
+    const left = relays.filter((r) => !r.done), n = relaysDone();
+    if (left.length) {
+      const near = left.reduce((a, b) => (Math.hypot(a.x - Pst.x, a.z - Pst.z) <= Math.hypot(b.x - Pst.x, b.z - Pst.z) ? a : b));
+      for (const r of left) T.push({ id: 'relay' + r.i, x: r.x, z: r.z, y: 8.4, label: r.name, primary: r === near });
+      if (zoneCur === 'prison') return { main: 'ESCAPE DETENTION SECTOR 7', sub: `Follow the cyan route out through the gate. Then sabotage the 3 Iris relays (${n}/3) to break the tower seal.`, T };
+      return { main: `SABOTAGE THE IRIS RELAYS  ${n}/3`, sub: 'Follow the cyan route to the nearest relay and HOLD E there. Each relay is guarded.', T };
+    }
+    T.push({ id: 'door', x: doorInteract.x, z: doorInteract.z, y: 4.2, label: 'TOWER ENTRANCE', primary: true });
+    return { main: 'ENTER THE IRIS TOWER', sub: 'The seal is broken. Go through the gate of the security ring to the tower door and press E.', T };
   }
-  objEl.textContent = 'OBJECTIVE: ' + t;
+  if (floorIdx >= FLOORS.length) {
+    if (boss && boss.alive) T.push({ id: 'boss', x: 0, z: 0, y: 5, label: 'THE IRIS', primary: false, noBeam: true });
+    return { main: 'DESTROY THE IRIS', sub: 'Keep moving, keep shooting. Fists will not be enough.', T };
+  }
+  const d = FLOORS[floorIdx], f = floorData, tag = `FLOOR ${floorIdx + 1}/${FLOORS.length}`;
+  if (d.lock === 'file' && !flags.file && f && f.file) {
+    T.push({ id: 'file', x: f.file.x, z: f.file.z, y: 2.4, label: 'YOUR FILE', primary: true });
+    return { main: 'FIND AND DESTROY YOUR FILE', sub: `${tag}. Follow the cyan route to the red-lit file cabinet and HOLD E. The elevator stays locked until then.`, T };
+  }
+  if (d.lock === 'censor' && !flags.censor) {
+    const c = npc.npcs.find((n) => n.censor && n.state !== 'ko');
+    if (c) { T.push({ id: 'censor', x: c.x, z: c.z, y: 3.4, label: 'CHIEF CENSOR', primary: true }); return { main: 'DEFEAT THE CHIEF CENSOR', sub: `${tag}. He guards the elevator and takes many hits. Shoot from cover, or choke him from behind.`, T }; }
+  }
+  if (f) T.push({ id: 'up', x: f.exitElev.x, z: f.exitElev.z, y: 2.4, label: 'ELEVATOR UP', primary: true });
+  const last = floorIdx === FLOORS.length - 1;
+  return { main: last ? 'TAKE THE ELEVATOR TO THE APEX' : 'TAKE THE ELEVATOR UP', sub: `${tag}. ` + (!flags.file ? 'Your file is in the Records Archive (floor 2).' : last ? 'The Iris is waiting at the top.' : 'Keep climbing. Guards patrol the rooms between.'), T };
+}
+let objKey = '';
+function refreshObjective() {
+  const o = objectiveNow();
+  guide.setTargets(o.T);
+  if (o.main !== objKey) {
+    const first = objKey === ''; objKey = o.main; objMainEl.textContent = o.main; objSubEl.textContent = o.sub;
+    objEl.classList.remove('flash'); void objEl.offsetWidth; objEl.classList.add('flash');
+    if (!first && started) sfx.alert(0.35);
+  } else if (objSubEl.textContent !== o.sub) objSubEl.textContent = o.sub;
 }
 function setCityVisible(v) { for (const r of relays) r.g.visible = v; for (const p of cityPickups) p.mesh.visible = v; tutorial.group.visible = v; city.root.visible = v; towerObj.tower.visible = v; towerObj.eye.visible = v; cityNpc.root.visible = v; doorGroup.visible = v; }
 function applyEnv(kind, fogColor = 0x2d0c0c) {
@@ -808,7 +839,7 @@ async function enterFloor(i, opts = {}) {
   await fade(false); transitioning = false;
 }
 function setupFloor(i, opts) {
-  const f = buildFloor(i, P0); floorData = f; scene.add(f.group); colliders = f.colliders; lightSources = f.lights;
+  const f = buildFloor(i, P0); floorData = f; scene.add(f.group); colliders = f.colliders; lightSources = f.lights; guide.setWorld('floor' + i, f.colliders, f.bounds.w / 2);
   npc = new NPCManager(scene, colliders, fx, npcCbs, director);
   npc.custom = true; npc.nodes = f.nodes; npc.droneH = 2.7; npc.droneLow = 1.9; npc.spawnPoint = f.start; npc.models = cityNpc.models;
   for (const s of f.spawn) npc.add(s.type, s.x, s.z, s.opts);
@@ -838,7 +869,7 @@ const bossCbs = {
 };
 async function setupBoss(opts) {
   boss = new Boss(scene, fx, bossCbs); await boss.init();
-  colliders = boss.colliders; lightSources = boss.lights; arenaR = ARENA_R - 1.2;
+  colliders = boss.colliders; lightSources = boss.lights; arenaR = ARENA_R - 1.2; guide.setWorld(null);
   npc = new NPCManager(scene, colliders, fx, npcCbs, director); npc.custom = true; npc.nodes = []; npc.droneH = 3; npc.droneLow = 2.2; npc.models = cityNpc.models;
   setHideSpots([]); stalker.attach(npc); mag = GUN.mag; reserve = Math.max(reserve, 36);
   player.position.set(0, 0, 17); player.rotation.set(0, Math.PI, 0, 'YXZ'); cam.yaw = 0; cam.pitch = 0.3;
@@ -852,7 +883,7 @@ async function enterCity() {
   if (transitioning) return; transitioning = true;
   await fade(true);
   clearFloor(); world = 'city'; floorIdx = -1; npc = cityNpc; colliders = cityColliders; lightSources = cityLights;
-  setCityVisible(true); applyEnv('city'); setMood('city'); interactables = cityInteractables; setHideSpots(cityHideList); pickups = cityPickups; stalker.attach(npc);
+  setCityVisible(true); guide.setWorld('city', cityColliders, EDGE + 2); applyEnv('city'); setMood('city'); interactables = cityInteractables; setHideSpots(cityHideList); pickups = cityPickups; stalker.attach(npc);
   player.position.set(0, 0, 12.8); player.rotation.set(0, 0, 0, 'YXZ'); cam.yaw = 0; cam.pitch = 0.5; zoneCur = null;
   refreshObjective(); await fade(false); transitioning = false;
 }
@@ -934,7 +965,7 @@ function updatePickups(dt, bucket) {
 }
 
 // ---------- start ----------
-refreshObjective();
+guide.setWorld('city', cityColliders, EDGE + 2); refreshObjective();
 const idle = new Promise((r) => { manager.onLoad = r; setTimeout(r, 20000); });
 manager.itemEnd('boot');
 await idle;
@@ -958,7 +989,7 @@ else {
   window.addEventListener('keydown', go); window.addEventListener('pointerdown', go);
 }
 
-let last = performance.now(), fpsAcc = 0, fpsFrames = 0;
+let last = performance.now(), fpsAcc = 0, fpsFrames = 0, objT = 0;
 let perfT = 0, perfF = 0, perfGood = 0;
 function perfTick(dt) {   // keep the game smooth: lower the render resolution (and finally the shadows) when the frame rate drops
   perfT += dt; perfF++;
@@ -1003,10 +1034,15 @@ function frame(now) {
     if (!cut.active) updateHud(dt);
   }
   if (!cut.active) updateCamera(paused ? 0.0001 : dt);
+  if (!paused) {
+    guide.setVisible(!cut.active && started && alive);
+    objT -= dt; if (objT <= 0) { objT = 0.3; refreshObjective(); }
+    if (!cut.active && started) { const dd = guide.update(dt, player.position, cam.yaw, hidden); objDistEl.textContent = dd != null ? Math.round(dd) + ' m' : ''; }
+  }
   sky.position.copy(camera.position);
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
 
 if (window.parent !== window) window.parent.postMessage({ type: 'ready' }, '*');
-window.__iris = { choke, AP, get gun() { return gun; }, player, camera, cam, camOverride, scene, renderer, cut, hurtPlayer, tryAttack, startRoll, enterFloor, flags, director, stalker, enterHide, exitHide, fire, cityHideList, get npc() { return npc; }, get boss() { return boss; }, get hp() { return hp; }, get floorIdx() { return floorIdx; }, get world() { return world; }, get interactables() { return interactables; }, get gameEnded() { return gameEnded; }, Pst };
+window.__iris = { guide, choke, AP, get gun() { return gun; }, player, camera, cam, camOverride, scene, renderer, cut, hurtPlayer, tryAttack, startRoll, enterFloor, flags, director, stalker, enterHide, exitHide, fire, cityHideList, get npc() { return npc; }, get boss() { return boss; }, get hp() { return hp; }, get floorIdx() { return floorIdx; }, get world() { return world; }, get interactables() { return interactables; }, get gameEnded() { return gameEnded; }, Pst };

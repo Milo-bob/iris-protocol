@@ -389,12 +389,15 @@ export class NPC {
     const dx = P.x - this.x, dz = P.z - this.z, d = Math.hypot(dx, dz); let rate = 0;
     const ears = 1 + 0.3 * (dir ? dir.ears : 0);
     if (P.noise > 0 && d < P.noise * ears) rate = 0.55 * (1 - d / (P.noise * ears));
-    const sneakMul = P.sneaking ? 0.45 + 0.3 * (dir ? dir.sneakWise : 0) : P.sprinting ? 1.2 : 1;
-    const range = cfg.range * sneakMul * (P.moving || P.sprinting ? 1 : 0.75) * (0.55 + 0.45 * (P.lit ?? 1));
+    const alert = AGGRO.has(this.state) || this.state === 'search';   // an alerted enemy looks all around and sees farther
+    const sneakMul = P.sneaking ? 0.5 + 0.3 * (dir ? dir.sneakWise : 0) : P.sprinting ? 1.25 : 1;
+    const range = cfg.range * (alert ? 1.25 : 1) * sneakMul * (P.moving || P.sprinting ? 1 : 0.85) * (0.75 + 0.25 * (P.lit ?? 1));
     if (d < range) {
-      const dot = (dx * Math.sin(this.yaw) + dz * Math.cos(this.yaw)) / (d || 1), near = d < (P.sneaking ? 1.1 : 2.4);
-      if ((near || dot > Math.cos(cfg.fov * Math.PI / 360)) && this.mgr.los(this.x, this.z, P.x, P.z, this.type === 'drone' ? 2.6 : 1.9)) {
-        this.sees = true; rate = Math.max(rate, 2.0 * (1 - 0.6 * d / range) + (near ? 1.5 : 0));
+      const dot = (dx * Math.sin(this.yaw) + dz * Math.cos(this.yaw)) / (d || 1);
+      const near = d < (alert ? 6 : P.sneaking ? 1.6 : 3.4);   // peripheral awareness: anyone this close is noticed even from the side
+      const fovCos = alert ? -0.35 : Math.cos(cfg.fov * Math.PI / 360);
+      if ((near || dot > fovCos) && this.mgr.los(this.x, this.z, P.x, P.z, this.type === 'drone' ? 2.6 : 1.9)) {
+        this.sees = true; rate = Math.max(rate, 2.4 * (1 - 0.5 * d / range) + (near ? 1.5 : 0));
       }
     }
     return rate;
