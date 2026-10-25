@@ -392,7 +392,9 @@ export class NPC {
     const alert = AGGRO.has(this.state) || this.state === 'search';   // an alerted enemy looks all around and sees farther
     const sneakMul = P.sneaking ? 0.5 + 0.3 * (dir ? dir.sneakWise : 0) : P.sprinting ? 1.25 : 1;
     const range = cfg.range * (alert ? 1.25 : 1) * sneakMul * (P.moving || P.sprinting ? 1 : 0.85) * (0.75 + 0.25 * (P.lit ?? 1));
-    if (d < range) {
+    // crouched and keeping still, or creeping along a wall / through shadow: invisible unless someone nearly bumps into you
+    const unseen = P.crouch && (!P.moving || P.cover) && d > 1.2;
+    if (d < range && !unseen) {
       const dot = (dx * Math.sin(this.yaw) + dz * Math.cos(this.yaw)) / (d || 1);
       const near = d < (alert ? 6 : P.sneaking ? 1.6 : 3.4);   // peripheral awareness: anyone this close is noticed even from the side
       const fovCos = alert ? -0.35 : Math.cos(cfg.fov * Math.PI / 360);

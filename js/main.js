@@ -107,7 +107,7 @@ const fx = new FX(scene);
 // ---------- player ----------
 const player = new THREE.Group();
 let mixer = null; const actions = {}; let currentAction = null;
-let bones = {}, gun = null, muzzle = null, flash = null;
+let bones = {}, gun = null, muzzle = null, flash = null, playerModel = null, modelBaseY = 0, crouchK = 0, coverNear = false, coverT = 0;
 {
   const gltf = await loadGLB('soldier');
   const model = gltf.scene;
@@ -116,8 +116,8 @@ let bones = {}, gun = null, muzzle = null, flash = null;
   model.scale.setScalar(k); model.position.y = -box.min.y * k;
   model.rotation.y = Math.PI;   // the Mixamo soldier faces -z; our convention is +z
   model.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
-  player.add(model);
-  mixer = new THREE.AnimationMixer(model);
+  player.add(model); playerModel = model; modelBaseY = model.position.y;
+  mixer =new THREE.AnimationMixer(model);
   for (const clip of gltf.animations) actions[clip.name.toLowerCase()] = mixer.clipAction(clip);
   for (const n of ['RightArm', 'RightForeArm', 'RightHand', 'Spine1', 'Spine2', 'LeftArm', 'LeftForeArm', 'LeftHand', 'LeftUpLeg', 'LeftLeg', 'RightUpLeg', 'RightLeg']) bones[n] = model.getObjectByName('mixamorig' + n) || null;
   // suppressed pistol in the right hand
@@ -510,7 +510,7 @@ function updatePlayer(dt) {
     const d = inputDir();
     if (d.lengthSq() > 0) {
       dir = d; moving = true;
-      if (sneak) { speed = SPEED.sneak; anim = 'walk'; ts = 0.75; }
+      if (sneak) { speed = SPEED.sneak; anim = 'walk'; ts = 0.6; }
       else if (keys.has('control')) { speed = SPEED.sprint; anim = 'run'; ts = 1.3; sprinting = true; }
       else { speed = SPEED.run; anim = 'run'; }
     }
@@ -550,6 +550,16 @@ function updatePlayer(dt) {
   play(anim, 0.12, ts);
   player.scale.y = roll.t > 0 ? 0.82 : 1;
   mixer?.update(dt);
+  // crouch pose while SHIFT is held: knees bent, torso leaning forward, body lowered
+  const crouching = sneak && !airborne && roll.t <= 0 && !chokeOn && !(atkT > 0);
+  crouchK += ((crouching ? 1 : 0) - crouchK) * Math.min(1, dt * 12);
+  Pst.crouch = crouchK > 0.6;
+  if (playerModel) playerModel.position.y = modelBaseY - 0.27 * crouchK;
+  if (crouchK > 0.01 && bones.LeftUpLeg) {
+    const B = bones, c = crouchK;
+    B.LeftUpLeg.rotation.x -= 0.9 * c; B.RightUpLeg.rotation.x -= 0.9 * c; B.LeftLeg.rotation.x += 1.5 * c; B.RightLeg.rotation.x += 1.5 * c;
+    B.Spine1 && (B.Spine1.rotation.x += 0.3 * c); B.Spine2 && (B.Spine2.rotation.x += 0.15 * c);
+  }
   if (airborne) {
     const k = Math.min(1, airT / 0.12), fall = Math.max(0, Math.min(1, -vy / JUMP_V));
     const B = bones;
@@ -559,6 +569,8 @@ function updatePlayer(dt) {
   poseArms(dt);
   // what the NPCs can perceive
   Pst.x = player.position.x; Pst.y = player.position.y; Pst.z = player.position.z; Pst.alive = alive;
+  coverT -= dt; if (coverT <= 0) { coverT = 0.15; coverNear = nearWall(player.position.x, player.position.z); }
+  Pst.cover = coverNear || lit < 0.5;   // pressed against a wall/object or standing in shadow
   Pst.sneaking = sneak && moving; Pst.sprinting = sprinting; Pst.dashing = roll.t > 0; Pst.moving = moving; Pst.hidden = false;
   let noise = roll.t > 0 ? 12 : sprinting ? 15 : moving ? (sneak ? 3.5 : 9) : 0;
   if (chokeOn) noise = Math.max(noise, 3);
@@ -569,7 +581,7 @@ function updatePlayer(dt) {
 function updateHidden(dt) {
   hideT += dt; speedNow = 0; mixer?.update(0); jumpQueued = false;
   if (hideT > 0.55 && (keys.has('w') || keys.has('a') || keys.has('s') || keys.has('d') || keys.has('arrowup') || keys.has('arrowdown') || keys.has('arrowleft') || keys.has('arrowright'))) { exitHide(); return; }
-  Pst.x = player.position.x; Pst.y = 0; Pst.z = player.position.z; Pst.alive = alive; Pst.hidden = true; Pst.sneaking = false; Pst.sprinting = false; Pst.dashing = false; Pst.moving = false; Pst.noise = 0;
+  Pst.x = player.position.x; Pst.y = 0; Pst.z = player.position.z; Pst.alive = alive; Pst.hidden = true; Pst.crouch = false; Pst.sneaking = false; Pst.sprinting = false; Pst.dashing = false; Pst.moving = false; Pst.noise = 0;
 }
 // arms: pistol raised after a shot, punch, choke. Axis-independent: each arm bone is turned in WORLD space so that
 // it points where we want, whatever the rig's local axes are.
@@ -606,6 +618,15 @@ function poseArms(dt) {
     aimBone(B.LeftArm, B.LeftForeArm, fx - lx * 0.4, up - 0.05, fz - lz * 0.4, k); aimBone(B.LeftForeArm, B.LeftHand, fx - lx * 0.55, up - 0.05, fz - lz * 0.55, k);   // support hand
   }
   if (flashT > 0 && flash) { flashT -= dt; flash.material.opacity = Math.max(0, flashT / 0.06); } else if (flash) flash.material.opacity = 0;
+}
+// is something tall (a wall, crate, vehicle...) within arm's reach? Then a crouching player is hidden from view.
+function nearWall(px, pz) {
+  const r = 1.2;
+  for (const c of colliders) {
+    if (c.h < 1.2) continue;
+    if (px > c.minX - r && px < c.maxX + r && pz > c.minZ - r && pz < c.maxZ + r) return true;
+  }
+  return false;
 }
 // how brightly the player is lit by the world's lights (shadows hide you)
 function computeLit() {
@@ -677,7 +698,7 @@ function updateHud(dt) {
   else if (!boss) bossBar.style.display = 'none';
   ammoEl.textContent = reloadT > 0 ? 'RELOADING' : mag + ' / ' + reserve; ammoWrap.classList.toggle('low', reloadT <= 0 && mag + reserve <= 4);
   // how visible the player is right now: sneaking, standing still and shadows lower it
-  visNow = hidden ? 0 : Math.min(1, (Pst.sneaking ? 0.45 : Pst.sprinting ? 1.2 : 1) * (moving || sprinting || roll.t > 0 ? 1 : 0.75) * (0.55 + 0.45 * lit) / 1.2);
+  visNow = hidden ? 0 : Pst.crouch && (!moving || Pst.cover) ? 0.05 : Math.min(1, (Pst.sneaking ? 0.45 : Pst.sprinting ? 1.2 : 1) * (moving || sprinting || roll.t > 0 ? 1 : 0.75) * (0.55 + 0.45 * lit) / 1.2);
   visFill.style.width = Math.max(4, visNow * 100) + '%';
   visTxt.textContent = hidden ? 'HIDDEN' : visNow < 0.3 ? 'IN SHADOW' : visNow < 0.6 ? 'CONCEALED' : visNow < 0.85 ? 'VISIBLE' : 'EXPOSED';
 }
@@ -772,9 +793,9 @@ function objectiveNow() {
     const left = relays.filter((r) => !r.done), n = relaysDone();
     if (left.length) {
       const near = left.reduce((a, b) => (Math.hypot(a.x - Pst.x, a.z - Pst.z) <= Math.hypot(b.x - Pst.x, b.z - Pst.z) ? a : b));
-      for (const r of left) T.push({ id: 'relay' + r.i, x: r.x, z: r.z, y: 8.4, label: r.name, primary: r === near });
-      if (zoneCur === 'prison') return { main: 'ESCAPE DETENTION SECTOR 7', sub: `Follow the cyan route out through the gate. Then sabotage the 3 Iris relays (${n}/3) to break the tower seal.`, T };
-      return { main: `SABOTAGE THE IRIS RELAYS  ${n}/3`, sub: 'Follow the cyan route to the nearest relay and HOLD E there. Each relay is guarded.', T };
+      for (const r of left) T.push({ id: 'relay' + r.i, x: r.x, z: r.z, y: 8.4, label: r.name, primary: r === near, chev: n === 0 });   // ground arrows only until the first relay is down
+      if (zoneCur === 'prison') return { main: 'ESCAPE DETENTION SECTOR 7', sub: `Head out through the gate. Then sabotage the 3 Iris relays (${n}/3) to break the tower seal.`, T };
+      return { main: `SABOTAGE THE IRIS RELAYS  ${n}/3`, sub: 'Find the nearest relay (marker, minimap) and HOLD E there. Each relay is guarded.', T };
     }
     T.push({ id: 'door', x: doorInteract.x, z: doorInteract.z, y: 4.2, label: 'TOWER ENTRANCE', primary: true });
     return { main: 'ENTER THE IRIS TOWER', sub: 'The seal is broken. Go through the gate of the security ring to the tower door and press E.', T };
@@ -786,7 +807,7 @@ function objectiveNow() {
   const d = FLOORS[floorIdx], f = floorData, tag = `FLOOR ${floorIdx + 1}/${FLOORS.length}`;
   if (d.lock === 'file' && !flags.file && f && f.file) {
     T.push({ id: 'file', x: f.file.x, z: f.file.z, y: 2.4, label: 'YOUR FILE', primary: true });
-    return { main: 'FIND AND DESTROY YOUR FILE', sub: `${tag}. Follow the cyan route to the red-lit file cabinet and HOLD E. The elevator stays locked until then.`, T };
+    return { main: 'FIND AND DESTROY YOUR FILE', sub: `${tag}. Find the red-lit file cabinet and HOLD E. The elevator stays locked until then.`, T };
   }
   if (d.lock === 'censor' && !flags.censor) {
     const c = npc.npcs.find((n) => n.censor && n.state !== 'ko');
@@ -1008,8 +1029,9 @@ function frame(now) {
     perfTick(dt);
     if (cut.active) {
       cut.update(dt); mixer?.update(dt);
-      Pst.x = player.position.x; Pst.z = player.position.z; Pst.cutscene = true;
+      Pst.x = player.position.x; Pst.z = player.position.z; Pst.cutscene = cut.active;   // cut.update() may just have ended it (onEnd cleared the flag)
     } else {
+      Pst.cutscene = false;
       litT -= dt; if (litT <= 0) { litT = 0.2; lit = computeLit(); } Pst.lit = lit;
       updatePlayer(dt);
       updateZone(dt);

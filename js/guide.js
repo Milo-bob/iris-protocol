@@ -165,7 +165,7 @@ export class Guide {
     const pr = this.targets.find((t) => t.primary);
     this.routeT -= dt;
     if (pr && this.w && (this.routeT <= 0 || Math.hypot(pos.x - this.pathFrom.x, pos.z - this.pathFrom.z) > 5)) { this.route(pos); this.pathFrom = { x: pos.x, z: pos.z }; this.routeT = 2; }
-    if (!pr || !this.visible) this.chev.count = 0; else this.layoutChevrons();
+    if (!pr || !pr.chev || !this.visible) this.chev.count = 0;   // ground arrows only where the objective asks for them else this.layoutChevrons();
     // markers
     const v4 = new THREE.Vector4(); let primaryDist = null;
     for (let i = 0; i < MAX_T; i++) {
