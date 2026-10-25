@@ -152,15 +152,9 @@ export function buildTutorial(scene, city, P0, cityColliders, fx) {
   decal('stab', cx + 3.6, cz - 6.5, facePlusX, 3.0);
 
   // 4) the way out: chalk arrows from the yard through the gate, down the avenue, through the ring to the tower door
-  const arrowAt = (x, z, dx, dz, size = 2.4) => decal('arrow', x, z, dirYaw(dx, dz), size);
-  const walk = (x0, z0, x1, z1, step, skip) => { const dx = x1 - x0, dz = z1 - z0, L = Math.hypot(dx, dz); for (let t = step / 2; t < L; t += step) { const x = x0 + dx / L * t, z = z0 + dz / L * t; if (!skip || !skip(x, z)) arrowAt(x + rnd(-0.3, 0.3), z + rnd(-0.3, 0.3), dx, dz, 2.5 + rnd(-0.2, 0.4)); } };
   const gz = 32.5;                                                  // the street that leads to the prison gate
-  arrowAt(cx, cz - 2.2, 0, -1, 1.8);                                // inside the yard, toward the open north gap
-  arrowAt(cx - 5.8, cz - 0.2, 0, -1, 1.8); arrowAt(cx - 5.8, cz - 3.4, 0, -1, 1.8);   // beyond the barrier, around the corner
-  walk(cx, gz, 1.5, gz, 26, (x) => x > cx - 2);                      // west along the street, through the gate
   decal('tower', 14.5, gz, dirYaw(-1, 0), 3.2);
   decal('tower', 0, 27.5, dirYaw(0, -1), 3.2);
-  walk(0, gz - 1, 0, 20, 30, (x, z) => Math.abs(z - 27.5) < 2.2);   // north along the avenue to the ring gate
   decal('danger', -3.9, 24, dirYaw(0, -1), 1.7); decal('danger', 3.9, 24, dirYaw(0, -1), 1.7);   // the guards at the ring gate
   decal('enter', 0, 13.6, dirYaw(0, -1), 2.4);                      // the tower door
 

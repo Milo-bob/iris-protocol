@@ -321,9 +321,8 @@ export function buildFloor(index, P) {
     };
     if (fileRoom) {
       const nFile = nodeOf.get('r' + fileRoom.id);
-      trail(route(nStart, nFile), 'arrow'); trail(route(nFile, nExit), 'arrowUp', 3);
       group.add(chalkMesh('file', file.x, file.z + 0.9, dirYaw(0, -1), 2.0));
-    } else trail(route(nStart, nExit), 'arrow');
+    }
     group.add(chalkMesh('enter', exitElev.x, exitElev.z + 1.4, dirYaw(0, -1), 2.2));
   }
 

@@ -892,7 +892,7 @@ async function setupBoss(opts) {
   boss = new Boss(scene, fx, bossCbs); await boss.init();
   colliders = boss.colliders; lightSources = boss.lights; arenaR = ARENA_R - 1.2; guide.setWorld(null);
   npc = new NPCManager(scene, colliders, fx, npcCbs, director); npc.custom = true; npc.nodes = []; npc.droneH = 3; npc.droneLow = 2.2; npc.models = cityNpc.models;
-  setHideSpots([]); stalker.attach(npc); mag = GUN.mag; reserve = Math.max(reserve, 36);
+  setHideSpots([]); stalker.attach(npc); mag = GUN.mag; reserve = Math.max(reserve, 36); pickups = [];
   player.position.set(0, 0, 17); player.rotation.set(0, Math.PI, 0, 'YXZ'); cam.yaw = 0; cam.pitch = 0.3;
   applyEnv('arena', 0x1a0608); bossBar.style.display = 'block';
   if (!opts.respawn) hp = Math.min(100, hp + 30);
@@ -978,6 +978,15 @@ function makeAmmoMesh(x, z) {
   g.position.set(x, 0, z); g.rotation.y = Math.random() * 6; scene.add(g); return g;
 }
 function addPickups(list, bucket) { for (const a of list) bucket.push({ x: a.x, z: a.z, amount: 5, mesh: makeAmmoMesh(a.x, a.z) }); }
+// boss arena: ammo crates drop whenever the player runs low, so the fight can never be stuck without a gun
+let bossAmmoT = 0;
+function bossAmmoTick(dt) {
+  if (mag + reserve > 8 || reloadT > 0 || pickups.length >= 2) { bossAmmoT = 0; return; }
+  bossAmmoT += dt; if (bossAmmoT < 4) return;
+  bossAmmoT = 0;
+  const a = Math.random() * Math.PI * 2, r = 5 + Math.random() * 8, x = Math.cos(a) * r, z = Math.sin(a) * r;
+  pickups.push({ x, z, amount: 12, mesh: makeAmmoMesh(x, z) }); fx.emit(x, 1.0, z, 14, 0xffd080, 3, 0.5); toast('AMMO CRATE DROPPED');
+}
 function updatePickups(dt, bucket) {
   for (let i = bucket.length - 1; i >= 0; i--) {
     const p = bucket[i]; p.mesh.rotation.y += dt * 0.8;
@@ -1049,6 +1058,7 @@ function frame(now) {
     if (!gameEnded && !(cut.active && boss && boss.phase === 4)) setIntensity(boss && boss.alive ? 0.6 + (boss.phase >= 3 ? 0.35 : 0) : Math.min(1, Math.max(npc.alarm / 70, stalker.active ? stalker.dread : 0)));
     for (const tr of tracers) if (tr.t > 0) { tr.t -= dt; tr.l.material.opacity = Math.max(0, tr.t / 0.09); }
     updatePickups(dt, pickups);
+    if (boss && boss.alive && alive) bossAmmoTick(dt);
     lightTimer -= dt; if (lightTimer <= 0) { updateLights(); lightTimer = 0.12; }
     moon.position.set(player.position.x - 26, 55, player.position.z + 20);
     moon.target.position.set(player.position.x, 0, player.position.z);
